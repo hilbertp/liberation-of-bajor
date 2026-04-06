@@ -42,6 +42,14 @@ Naming: `slice/{n}-{short-description}` (e.g. `slice/1-contracts`).
 
 Layer 0 (infrastructure) commits land on `main`. All slice work goes on its own branch. If work lands on `main` or a prior branch, Kira will issue an amendment commission.
 
+**Never merge to `main` without explicit instruction from Kira.** Kira controls when branches land. O'Brien delivers work on branches and writes DONE reports. Merging is Kira's decision alone.
+
+**Amendment commissions (`references` is non-null):** When a commission has `references: "NNN"`, it is an amendment to a prior commission. Do NOT cut a new branch from `main`. Instead:
+1. Check out the original branch from commission NNN (find it in that commission's DONE report under `branch:`).
+2. Apply the requested changes on that branch.
+3. Write the DONE report for the amendment commission ID (not the original).
+The original branch stays alive until Kira accepts and merges it.
+
 ---
 
 ## How to read a commission
