@@ -361,6 +361,7 @@ function parseFrontmatter(content) {
 let heartbeatState = {
   status: 'idle',
   current_commission: null,
+  current_commission_title: null,
   pickupTime: null,   // internal — not written to file
   processed_total: 0,
 };
@@ -370,12 +371,24 @@ function writeHeartbeat() {
     ? Math.floor((Date.now() - heartbeatState.pickupTime) / 1000)
     : null;
 
+  // Map getQueueSnapshot keys to the dashboard's expected schema:
+  //   in_progress → active, completed → done, failed → error
+  const raw = getQueueSnapshot(QUEUE_DIR);
+  const queue = {
+    waiting: raw.waiting,
+    active:  raw.in_progress,
+    done:    raw.completed,
+    error:   raw.failed,
+  };
+
   const snapshot = {
     ts: new Date().toISOString(),
     status: heartbeatState.status,
     current_commission: heartbeatState.current_commission,
+    current_commission_title: heartbeatState.current_commission_title,
     commission_elapsed_seconds: elapsedSeconds,
     processed_total: heartbeatState.processed_total,
+    queue,
   };
 
   try {
@@ -390,6 +403,7 @@ function writeHeartbeat() {
 // ---------------------------------------------------------------------------
 
 let processing = false;
+let idlePrintCounter = 0;
 
 // ---------------------------------------------------------------------------
 // O'Brien invocation
@@ -404,12 +418,13 @@ let processing = false;
  * Always cleans up the IN_PROGRESS file on completion (existence-checked to
  * avoid ENOENT when O'Brien's crash recovery already handled it).
  */
-function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs) {
+function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title) {
   const prompt = commissionContent + '\n\nWrite your report to: ' + donePath;
 
   const pickupTime = Date.now();
   heartbeatState.status = 'processing';
   heartbeatState.current_commission = id;
+  heartbeatState.current_commission_title = title || null;
   heartbeatState.pickupTime = pickupTime;
   writeHeartbeat();
 
@@ -501,6 +516,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
       processing = false;
       heartbeatState.status = 'idle';
       heartbeatState.current_commission = null;
+      heartbeatState.current_commission_title = null;
       heartbeatState.pickupTime = null;
       heartbeatState.processed_total += 1;
       writeHeartbeat();
@@ -622,7 +638,16 @@ function poll() {
     .filter(f => f.endsWith('-PENDING.md'))
     .sort(); // lexicographic = numeric FIFO given zero-padded IDs
 
-  if (pendingFiles.length === 0) return;
+  if (pendingFiles.length === 0) {
+    idlePrintCounter += 1;
+    if (idlePrintCounter >= 12) {
+      idlePrintCounter = 0;
+      const snap = getQueueSnapshot(QUEUE_DIR);
+      const ts = timestampNow();
+      print(`  ${C.dim}·${C.reset}  Queue: ${snap.waiting} waiting${SYM.sep}${snap.in_progress} in progress${SYM.sep}${snap.completed} done${SYM.sep}${snap.failed} failed  [${ts}]`);
+    }
+    return;
+  }
 
   const pendingFile = pendingFiles[0];
   const pendingPath = path.join(QUEUE_DIR, pendingFile);
@@ -712,7 +737,7 @@ function poll() {
   processing = true;
 
   // Invoke O'Brien asynchronously — event loop stays live.
-  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs);
+  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title);
 }
 
 // ---------------------------------------------------------------------------
