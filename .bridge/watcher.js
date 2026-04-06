@@ -48,14 +48,121 @@ const PROJECT_DIR    = path.resolve(__dirname, config.projectDir);
 fs.mkdirSync(QUEUE_DIR, { recursive: true });
 
 // ---------------------------------------------------------------------------
+// Color support
+// ---------------------------------------------------------------------------
+
+// Honor NO_COLOR env var: checked once at startup.
+const USE_COLOR = !process.env.NO_COLOR;
+
+const C = {
+  green:  USE_COLOR ? '\x1b[32m' : '',
+  red:    USE_COLOR ? '\x1b[31m' : '',
+  yellow: USE_COLOR ? '\x1b[33m' : '',
+  cyan:   USE_COLOR ? '\x1b[36m' : '',
+  dim:    USE_COLOR ? '\x1b[2m'  : '',
+  reset:  USE_COLOR ? '\x1b[0m'  : '',
+};
+
+// ---------------------------------------------------------------------------
+// Stdout-only output (dividers, progress ticks — must NOT go to bridge.log)
+// ---------------------------------------------------------------------------
+
+const DIVIDER = '─'.repeat(64);
+
+function printStdout(line) {
+  process.stdout.write(line + '\n');
+}
+
+// ---------------------------------------------------------------------------
 // Structured logging
 // ---------------------------------------------------------------------------
 
 /**
+ * timestampNow()
+ * Returns HH:MM:SS string for the current local time.
+ */
+function timestampNow() {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * formatForStdout(level, event, fields)
+ *
+ * Returns a human-readable line (or null to suppress) for terminal display.
+ * bridge.log receives JSON; stdout receives this.
+ */
+function formatForStdout(level, event, fields) {
+  // Heartbeat is too noisy for the terminal — suppress entirely.
+  if (event === 'heartbeat') return null;
+
+  const ts = timestampNow();
+  const prefix = `[Bridge] ${ts}`;
+
+  if (event === 'complete') {
+    const durationMs = fields.durationMs || 0;
+    const totalSec   = Math.floor(durationMs / 1000);
+    const mins       = Math.floor(totalSec / 60);
+    const secs       = totalSec % 60;
+    const duration   = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
+    if (fields.msg && fields.msg.includes('no DONE file')) {
+      return `${prefix}  ${C.red}✗ Commission ${fields.id} exited cleanly but wrote no DONE file — fallback written · ${duration}${C.reset}`;
+    }
+    if (level === 'error' || level === 'warn') {
+      return `${prefix}  ${C.red}✗ Commission ${fields.id} failed · ${duration}${C.reset}`;
+    }
+    return `${prefix}  ${C.green}✓ Commission ${fields.id} complete · ${duration}${C.reset}`;
+  }
+
+  if (event === 'state') {
+    return `${prefix}  ${C.dim}  ${fields.from} → ${fields.to}${C.reset}`;
+  }
+
+  if (event === 'timeout') {
+    let msg = `✗ Commission ${fields.id} timed out`;
+    if (fields.durationMs) {
+      const totalSec = Math.floor(fields.durationMs / 1000);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      msg += ` · ${mins > 0 ? `${mins}m ${secs}s` : `${secs}s`}`;
+    }
+    return `${prefix}  ${C.red}${msg}${C.reset}`;
+  }
+
+  if (event === 'error') {
+    const detail = fields.exitCode != null ? `exit ${fields.exitCode}` : (fields.error || '');
+    const msg = `✗ ${fields.msg || 'Error'}${detail ? ` · ${detail}` : ''}`;
+    return `${prefix}  ${C.red}${msg}${C.reset}`;
+  }
+
+  if (event === 'invoke') {
+    const timeoutMin = Math.round((fields.timeoutMs || 0) / 60000);
+    return `${prefix}  ${C.dim}  claude -p invoked (timeout: ${timeoutMin}min)${C.reset}`;
+  }
+
+  if (event === 'pickup') {
+    const titlePart = fields.title ? `  "${fields.title}"` : '';
+    return `${prefix}  ${C.cyan}▶ Commission ${fields.id}${titlePart}${C.reset}`;
+  }
+
+  if (event === 'startup') {
+    const pollSec    = Math.round((config.pollIntervalMs || 5000) / 1000);
+    const timeoutMin = Math.round((config.timeoutMs || 900000) / 60000);
+    return `${prefix}  Watcher started · polling every ${pollSec}s · timeout ${timeoutMin}min`;
+  }
+
+  return `${prefix}  ${fields.msg || event}`;
+}
+
+/**
  * log(level, event, fields)
  *
- * Writes one JSON line to bridge.log AND mirrors to stdout.
- * Each line: { ts, level, event, ...fields }
+ * Writes one JSON line to bridge.log AND a human-readable line to stdout.
+ * Each log line: { ts, level, event, ...fields }
  */
 function log(level, event, fields) {
   const line = JSON.stringify(Object.assign({ ts: new Date().toISOString(), level, event }, fields));
@@ -65,7 +172,10 @@ function log(level, event, fields) {
     // Log file write failure must not crash the watcher.
     process.stdout.write('[log-write-error] ' + err.message + '\n');
   }
-  process.stdout.write(line + '\n');
+  const humanLine = formatForStdout(level, event, fields);
+  if (humanLine !== null) {
+    process.stdout.write(humanLine + '\n');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +270,16 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
     timeoutMs: effectiveTimeoutMs,
   });
 
+  // Progress tick: every 60s while Rook is running — stdout only, not bridge.log.
+  const tickInterval = setInterval(() => {
+    const elapsedMs  = Date.now() - pickupTime;
+    const totalSec   = Math.floor(elapsedMs / 1000);
+    const mins       = Math.floor(totalSec / 60);
+    const secs       = totalSec % 60;
+    const elapsed    = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+    printStdout(`[Bridge] ${timestampNow()}  ${C.yellow}⏳ still running · ${elapsed} elapsed${C.reset}`);
+  }, 60000);
+
   const child = execFile(
     config.claudeCommand,
     config.claudeArgs,
@@ -170,6 +290,8 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
       maxBuffer: 10 * 1024 * 1024, // 10 MB stdout buffer
     },
     (err, stdout, stderr) => {
+      clearInterval(tickInterval);
+
       const durationMs = Date.now() - pickupTime;
       const isTimeout = err && err.killed && err.signal === 'SIGTERM';
 
@@ -201,6 +323,9 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
         writeErrorFile(errorPath, id, reason, err, stdout, stderr);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR' });
       }
+
+      // Visual divider after commission resolves (stdout only).
+      printStdout(DIVIDER);
 
       // Clean up IN_PROGRESS file.
       try {
@@ -366,7 +491,7 @@ function poll() {
     return;
   }
 
-  // Parse frontmatter for timeout_min override.
+  // Parse frontmatter for timeout_min override and title.
   const meta = parseFrontmatter(commissionContent);
   const timeoutMin = meta && meta.timeout_min && meta.timeout_min !== 'null'
     ? parseInt(meta.timeout_min, 10)
@@ -374,6 +499,7 @@ function poll() {
   const effectiveTimeoutMs = timeoutMin != null && !isNaN(timeoutMin)
     ? timeoutMin * 60 * 1000
     : config.timeoutMs;
+  const title = (meta && meta.title) || null;
 
   // Derive sibling paths.
   const inProgressPath = path.join(QUEUE_DIR, `${id}-IN_PROGRESS.md`);
@@ -388,7 +514,10 @@ function poll() {
     return;
   }
 
-  log('info', 'pickup', { id, msg: 'Commission picked up', file: pendingFile });
+  // Visual divider before commission starts (stdout only).
+  printStdout(DIVIDER);
+
+  log('info', 'pickup', { id, title, msg: 'Commission picked up', file: pendingFile });
   log('info', 'state', { id, from: 'PENDING', to: 'IN_PROGRESS' });
 
   processing = true;
@@ -449,6 +578,9 @@ log('info', 'startup', {
     maxRetries: config.maxRetries,
   },
 });
+
+// Visual divider after startup line (stdout only).
+printStdout(DIVIDER);
 
 crashRecovery();
 
