@@ -64,15 +64,17 @@ Before writing a new commission, scan `.bridge/queue/` for all files matching `{
 
 3. **Write `{id}-PENDING.md`** using the commission template at `.bridge/templates/commission.md`. Fill all frontmatter fields. The `from` field is always `kira`; `to` is always `obrien`. For an amendment, set `references` to the parent commission ID (see Section H).
 
-4. **Save the file to `.bridge/queue/`** — the watcher polls for new PENDING files and picks it up automatically. No further action from Kira is needed.
+4. **Save the file to `.bridge/queue/`** — the watcher polls for new PENDING files and picks it up automatically.
+
+5. **Set up the commission watcher** — immediately after writing the PENDING file, create a one-shot Cowork scheduled task that will detect O'Brien's DONE/ERROR file and evaluate it automatically. Follow the template at `docs/kira/commission-watcher-task.md`. This fires as a separate Cowork session ~2 minutes later, evaluates the report, and presents the result to Sisko without manual prompting.
 
 ---
 
 ## F. Polling pattern
 
-After writing a commission, wait for O'Brien's report to appear.
+The commission watcher (step E.5) handles polling automatically via scheduled tasks. This section documents the manual fallback in case scheduled tasks are unavailable.
 
-**How to poll:**
+**Manual poll (fallback only):**
 
 1. Read `.bridge/heartbeat.json` — confirm the bridge is still live before waiting.
 2. Check for **`{id}-DONE.md`** by exact path: `.bridge/queue/{id}-DONE.md`.

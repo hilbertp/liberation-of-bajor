@@ -66,6 +66,9 @@ The watcher runs from the code on disk at startup time. Code changes to `watcher
 ### Check heartbeat before commissioning
 Before writing a commission, check `.bridge/heartbeat.json`. If the file is absent or the timestamp is more than 60 seconds stale, the watcher is down. Don't commission into a dead queue.
 
+### Set up the commission watcher after every commission
+After writing a PENDING file, immediately create a one-shot Cowork scheduled task using the template at `docs/kira/commission-watcher-task.md`. This is step E.5 in KIRA.md. The task fires ~2 minutes later in a new session, detects the DONE/ERROR file, evaluates the report, and presents the result to Sisko — without anyone needing to prompt this session. If the commission is still in progress, the task re-schedules itself. The chain stops when DONE or ERROR lands. Never skip this step — it's what makes the bridge responsive.
+
 ---
 
 ## Working with Sisko
