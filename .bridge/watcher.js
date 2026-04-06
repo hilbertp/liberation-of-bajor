@@ -226,7 +226,7 @@ function printStartupBlock(recoveryActions) {
 
   print('');
   print(hLine(B.dbl));
-  print(`  Bridge of Hormuz${SYM.sep}Watcher`);
+  print(`  Liberation of Bajor${SYM.sep}Watcher`);
   print(`  Started: ${ts}${SYM.sep}Polling every ${pollSec}s${SYM.sep}Timeout: ${timeoutMin}min`);
   print(hLine(B.dbl));
 
@@ -271,7 +271,7 @@ function openCommissionBlock(id, title) {
   const titleStr = title ? `${SYM.sep}"${title}"` : '';
   print(`${B.tl}${B.sng.repeat(W - 1)}`);
   print(`${B.vert}  ${SYM.right} Commission ${id}${titleStr}`);
-  print(`${B.vert}    Queued${SYM.arrow}Handed off to Rook`);
+  print(`${B.vert}    Queued${SYM.arrow}Handed off to O'Brien`);
   print(`${B.vert}`);
 }
 
@@ -299,7 +299,7 @@ function closeCommissionBlock(success, durationMs, tokensIn, tokensOut, costUsd,
     const parts = [duration, tokenStr];
     if (costStr) parts.push(costStr);
     print(`${B.vert}    ${C.green}${SYM.check}${C.reset} Complete${SYM.sep}${parts.join(SYM.sep)}`);
-    print(`${B.vert}    Status: Done${SYM.arrow}Waiting for Mara's review`);
+    print(`${B.vert}    Status: Done${SYM.arrow}Waiting for Kira's review`);
   } else {
     const reasonStr = reason || 'Unknown error';
     print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} Failed${SYM.sep}${duration}${SYM.sep}Reason: ${reasonStr}`);
@@ -392,19 +392,19 @@ function writeHeartbeat() {
 let processing = false;
 
 // ---------------------------------------------------------------------------
-// Rook invocation
+// O'Brien invocation
 // ---------------------------------------------------------------------------
 
 /**
- * invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs)
+ * invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs)
  *
  * Pipes commission content + report path instruction to `claude -p`.
  * On success: checks donePath exists; if not, writes a fallback ERROR report.
  * On failure: writes an ERROR report.
  * Always cleans up the IN_PROGRESS file on completion (existence-checked to
- * avoid ENOENT when Rook's crash recovery already handled it).
+ * avoid ENOENT when O'Brien's crash recovery already handled it).
  */
-function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs) {
+function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs) {
   const prompt = commissionContent + '\n\nWrite your report to: ' + donePath;
 
   const pickupTime = Date.now();
@@ -422,7 +422,7 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
     timeoutMs: effectiveTimeoutMs,
   });
 
-  // Progress tick: every 60s while Rook is running — stdout only, not bridge.log.
+  // Progress tick: every 60s while O'Brien is running — stdout only, not bridge.log.
   const tickInterval = setInterval(() => {
     printProgressTick(Date.now() - pickupTime);
   }, 60000);
@@ -448,17 +448,17 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
       const costUsd = computeCost(tokensIn, tokensOut);
 
       if (!err) {
-        // Success path: check Rook wrote his DONE file.
+        // Success path: check O'Brien wrote his DONE file.
         if (fs.existsSync(donePath)) {
-          log('info', 'complete', { id, msg: 'Rook finished — DONE file present', durationMs, tokensIn, tokensOut });
+          log('info', 'complete', { id, msg: 'O'Brien finished — DONE file present', durationMs, tokensIn, tokensOut });
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'DONE' });
           closeCommissionBlock(true, durationMs, tokensIn, tokensOut, costUsd, null);
           recordSessionResult(true, tokensIn, tokensOut, costUsd);
         } else {
-          // Rook exited 0 but wrote no DONE file — write an ERROR report with reason "no_report".
+          // O'Brien exited 0 but wrote no DONE file — write an ERROR report with reason "no_report".
           log('warn', 'complete', {
             id,
-            msg: 'Rook exited cleanly but wrote no DONE file — writing ERROR (no_report)',
+            msg: 'O'Brien exited cleanly but wrote no DONE file — writing ERROR (no_report)',
             reason: 'no_report',
             durationMs,
           });
@@ -488,7 +488,7 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
       printSessionSummary();
 
       // Task 1: ENOENT fix — check existence before unlinking.
-      // Rook's crash recovery may have already renamed or deleted this file.
+      // O'Brien's crash recovery may have already renamed or deleted this file.
       if (fs.existsSync(inProgressPath)) {
         try {
           fs.unlinkSync(inProgressPath);
@@ -520,7 +520,7 @@ function invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, 
  * writeErrorFile(errorPath, id, reason, err, stdout, stderr)
  *
  * Writes a structured ERROR report. The frontmatter always includes `reason`
- * so bridge.log and Mara's tooling can distinguish failure modes:
+ * so bridge.log and Kira's tooling can distinguish failure modes:
  *   "timeout"             — process was killed after exceeding the timeout
  *   "crash"               — process exited non-zero; exit_code included
  *   "no_report"           — process exited 0 but wrote no DONE file
@@ -544,7 +544,7 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
     `id: "${id}"`,
     `title: "Commission ${id} — ${reason}"`,
     'from: watcher',
-    'to: mara',
+    'to: kira',
     'status: ERROR',
     `commission_id: "${id}"`,
     `completed: "${completed}"`,
@@ -711,8 +711,8 @@ function poll() {
 
   processing = true;
 
-  // Invoke Rook asynchronously — event loop stays live.
-  invokeRook(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs);
+  // Invoke O'Brien asynchronously — event loop stays live.
+  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -797,7 +797,7 @@ function crashRecovery() {
  * Returns "001" if the directory is empty or unreadable.
  *
  * This function is purely computational — it does not write any files.
- * Exported so Mara can call it from .bridge/next-id.js.
+ * Exported so Kira can call it from .bridge/next-id.js.
  */
 function nextCommissionId(queueDir) {
   let files;

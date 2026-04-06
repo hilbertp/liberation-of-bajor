@@ -185,9 +185,9 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 
 ### Key project references (outside the repo)
 
-These files live in the parent Hormuz directory, not in this repo:
+These files live in the parent Liberation of Bajor directory, not in this repo:
 
-| Item | Path (relative to parent Hormuz folder) |
+| Item | Path (relative to parent Liberation of Bajor folder) |
 |---|---|
 | PRD | `PRD — Liberation of Bajor v2.md` |
 | Capability Map | `Capability Map — Liberation of Bajor.md` |

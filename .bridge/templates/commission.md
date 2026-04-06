@@ -3,8 +3,8 @@
 id: ""
 <!-- title: Short human-readable title for this commission. -->
 title: ""
-from: mara
-to: rook
+from: kira
+to: obrien
 <!-- priority: low | normal | high | spike -->
 priority: normal
 <!-- created: ISO 8601 timestamp when you wrote this commission. -->
@@ -17,12 +17,12 @@ timeout_min: null
 
 ## Objective
 
-<!-- One or two sentences: what should Rook accomplish? This defines scope. -->
+<!-- One or two sentences: what should O'Brien accomplish? This defines scope. -->
 
 ## Context
 
-<!-- Background Rook needs. Reference file paths or prior commission IDs — Rook can look them up.
-     The watcher injects nothing. Don't rely on Rook inferring context that isn't here or on disk. -->
+<!-- Background O'Brien needs. Reference file paths or prior commission IDs — O'Brien can look them up.
+     The watcher injects nothing. Don't rely on O'Brien inferring context that isn't here or on disk. -->
 
 ## Tasks
 
@@ -37,7 +37,7 @@ timeout_min: null
 
 ## Success criteria
 
-<!-- Checkable conditions Mara will use to evaluate the report.
-     Rook self-evaluates against these before writing his report. -->
+<!-- Checkable conditions Kira will use to evaluate the report.
+     O'Brien self-evaluates against these before writing his report. -->
 
 1.

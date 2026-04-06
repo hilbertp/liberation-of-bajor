@@ -1,21 +1,21 @@
 # Amendment Examples
 
-Two worked examples of the amendment protocol. Reference alongside `MARA.md §H` and `docs/mara/evaluation-rubric.md`.
+Two worked examples of the amendment protocol. Reference alongside `KIRA.md §H` and `docs/kira/evaluation-rubric.md`.
 
 ---
 
-## Example 1: Rook delivered PARTIAL work
+## Example 1: O'Brien delivered PARTIAL work
 
-**Scenario:** Commission `005` asked Rook to create three contract docs and a test harness. Rook's report came back with `status: PARTIAL` — the three contract docs exist and are committed, but the test harness was not started due to time constraints. Mara evaluates: three of four success criteria met.
+**Scenario:** Commission `005` asked O'Brien to create three contract docs and a test harness. O'Brien's report came back with `status: PARTIAL` — the three contract docs exist and are committed, but the test harness was not started due to time constraints. Kira evaluates: three of four success criteria met.
 
-**Mara's action:** Issue amendment `006`, referencing `005`, scoped to the remaining work.
+**Kira's action:** Issue amendment `006`, referencing `005`, scoped to the remaining work.
 
 ```markdown
 ---
 id: "006"
 title: "Amendment: complete test harness from commission 005"
-from: mara
-to: rook
+from: kira
+to: obrien
 priority: normal
 created: "2026-04-06T14:00:00Z"
 references: "005"
@@ -52,18 +52,18 @@ and accepted. The test harness was not started. Pick up on the same branch: `sli
 
 ---
 
-## Example 2: Rook was BLOCKED on a decision
+## Example 2: O'Brien was BLOCKED on a decision
 
-**Scenario:** Commission `007` asked Rook to implement a retry policy for the watcher. Rook's report came back with `status: BLOCKED` — Rook found two viable retry strategies (exponential backoff vs. fixed interval) and needs Mara to decide before proceeding.
+**Scenario:** Commission `007` asked O'Brien to implement a retry policy for the watcher. O'Brien's report came back with `status: BLOCKED` — O'Brien found two viable retry strategies (exponential backoff vs. fixed interval) and needs Kira to decide before proceeding.
 
-**Mara's action:** Read Rook's analysis in the report, make the decision, issue amendment `008` with the answer.
+**Kira's action:** Read O'Brien's analysis in the report, make the decision, issue amendment `008` with the answer.
 
 ```markdown
 ---
 id: "008"
 title: "Amendment: retry policy decision for commission 007"
-from: mara
-to: rook
+from: kira
+to: obrien
 priority: normal
 created: "2026-04-06T16:00:00Z"
 references: "007"
@@ -76,7 +76,7 @@ Unblock commission 007: implement the watcher retry policy using the decided str
 
 ## Context
 
-Commission 007 is at `.bridge/queue/007-DONE.md` (status: BLOCKED). Rook presented two
+Commission 007 is at `.bridge/queue/007-DONE.md` (status: BLOCKED). O'Brien presented two
 options. Decision: use **fixed interval retry** (3 retries, 10s apart). Rationale: simpler
 to reason about in a local queue; backoff adds complexity without meaningful benefit at
 this scale.
