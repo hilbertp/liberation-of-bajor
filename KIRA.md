@@ -66,13 +66,19 @@ Before writing a new commission, scan `bridge/queue/` for all files matching `{i
 
 4. **Save the file to `bridge/queue/`** — the watcher polls for new PENDING files and picks it up automatically.
 
-5. **Set up the commission watcher** — immediately after writing the PENDING file, create a one-shot Cowork scheduled task that will detect O'Brien's DONE/ERROR file and evaluate it automatically. Follow the template at `docs/kira/commission-watcher-task.md`. This fires as a separate Cowork session ~2 minutes later, evaluates the report, and presents the result to Sisko without manual prompting.
+5. **Commit the PENDING file to git** — this is critical for automated evaluation. The recurring commission watcher task needs the original success criteria to evaluate O'Brien's report. Run:
+   ```
+   git add bridge/queue/{id}-PENDING.md
+   git commit -m "commission({id}): {short title}"
+   ```
+
+6. **The commission watcher handles the rest** — a recurring scheduled task (`kira-commission-watch`, every 3 minutes) automatically detects O'Brien's DONE/ERROR files, evaluates them against the committed success criteria, and presents the verdict to Sisko. Kira does NOT need to create per-commission watcher tasks. See `docs/kira/commission-watcher-task.md` for details.
 
 ---
 
 ## F. Polling pattern
 
-The commission watcher (step E.5) handles polling automatically via scheduled tasks. This section documents the manual fallback in case scheduled tasks are unavailable.
+The commission watcher (step E.6) handles polling automatically via a recurring scheduled task (`kira-commission-watch`). This section documents the manual fallback in case scheduled tasks are unavailable.
 
 **Manual poll (fallback only):**
 
@@ -157,7 +163,7 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 
 ## K. Project Status
 
-*Updated: 2026-04-06 by Kira*
+*Updated: 2026-04-07 by Kira*
 
 ### Accepted slices
 
@@ -171,6 +177,8 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 | 6: Dashboard wiring | 013 | `slice/6-dashboard-wiring` | ACCEPTED, merged to main |
 | 7: Heartbeat enrichment | 014 | `slice/7-heartbeat-enrichment` | ACCEPTED, merged to main |
 | 8: Unhide bridge dir | 015 | `slice/8-unhide-bridge` | ACCEPTED, merged to main |
+| 9: Goal field | 016 | `slice/9-goal-field` | ACCEPTED, merged to main |
+| 10: Responsive dashboard | 017 | `slice/10-responsive-dashboard` | ACCEPTED, merged to main |
 
 ### Fix commissions
 
@@ -188,12 +196,13 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 
 ### Next up
 
-**Slice 9** — candidates:
+**Slice 11** — candidates:
+- **Nog code review gate** — linting, best practices, anti-patterns, readability over cleverness, no unnecessary refactor, small-enough change scope
 - **Smart timeout** — activity-based monitoring instead of flat 15-min kill
 - **QA pipeline** — commission Nog and Bashir roles into the review cycle
 - **Token/cost phase tracking** — granular cost by phase (planning/execution/correction)
 
-Next commission ID: **016**
+Next commission ID: **018**
 
 ### Open flags
 

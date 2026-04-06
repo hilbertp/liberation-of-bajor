@@ -43,6 +43,7 @@ const QUEUE_DIR      = path.resolve(__dirname, config.queueDir);
 const LOG_FILE       = path.resolve(__dirname, config.logFile);
 const HEARTBEAT_FILE = path.resolve(__dirname, config.heartbeatFile);
 const PROJECT_DIR    = path.resolve(__dirname, config.projectDir);
+const REGISTER_FILE  = path.resolve(__dirname, 'register.jsonl');
 
 // Ensure queue directory exists.
 fs.mkdirSync(QUEUE_DIR, { recursive: true });
@@ -333,6 +334,28 @@ function log(level, event, fields) {
 }
 
 // ---------------------------------------------------------------------------
+// Register — append-only event log (fortlaufende Liste)
+//
+// One JSON line per event. The commission body is embedded in the COMMISSIONED
+// event so the original spec (with success criteria) is always recoverable.
+// Kira's evaluation task reads this file instead of hunting for renamed/deleted
+// queue files.
+// ---------------------------------------------------------------------------
+
+function registerEvent(id, event, extra) {
+  const entry = Object.assign(
+    { ts: new Date().toISOString(), id: String(id), event },
+    extra || {}
+  );
+  try {
+    fs.appendFileSync(REGISTER_FILE, JSON.stringify(entry) + '\n');
+  } catch (err) {
+    // Register write failure must not crash the watcher.
+    log('warn', 'register_error', { id, msg: 'Failed to write register entry', error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Frontmatter parsing
 // ---------------------------------------------------------------------------
 
@@ -473,6 +496,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
         if (fs.existsSync(donePath)) {
           log('info', 'complete', { id, msg: "O'Brien finished — DONE file present", durationMs, tokensIn, tokensOut });
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'DONE' });
+          registerEvent(id, 'DONE', { durationMs, tokensIn, tokensOut, costUsd });
           closeCommissionBlock(true, durationMs, tokensIn, tokensOut, costUsd, null);
           recordSessionResult(true, tokensIn, tokensOut, costUsd);
         } else {
@@ -485,6 +509,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
           });
           writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr);
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'no_report' });
+          registerEvent(id, 'ERROR', { reason: 'no_report', durationMs });
           closeCommissionBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'No report written');
           recordSessionResult(false, tokensIn, tokensOut, costUsd);
         }
@@ -501,6 +526,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
         });
         writeErrorFile(errorPath, id, reason, err, stdout, stderr);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
+        registerEvent(id, 'ERROR', { reason, exitCode: err.code, durationMs });
         const reasonDisplay = isTimeout ? 'Timed out' : 'Process failed';
         closeCommissionBlock(false, durationMs, tokensIn, tokensOut, costUsd, reasonDisplay);
         recordSessionResult(false, tokensIn, tokensOut, costUsd);
@@ -508,13 +534,18 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
 
       printSessionSummary();
 
-      // Task 1: ENOENT fix — check existence before unlinking.
-      // O'Brien's crash recovery may have already renamed or deleted this file.
+      // Archive the original commission so Kira's evaluation task can find the
+      // success criteria.  Rename IN_PROGRESS → COMMISSION (permanent archive).
+      // The COMMISSION suffix is inert — the poll loop only looks for PENDING files.
+      const commissionArchivePath = path.join(QUEUE_DIR, `${id}-COMMISSION.md`);
       if (fs.existsSync(inProgressPath)) {
         try {
-          fs.unlinkSync(inProgressPath);
-        } catch (unlinkErr) {
-          log('warn', 'error', { id, msg: 'Failed to delete IN_PROGRESS file', error: unlinkErr.message });
+          fs.renameSync(inProgressPath, commissionArchivePath);
+          log('info', 'state', { id, msg: 'Archived commission', from: 'IN_PROGRESS', to: 'COMMISSION' });
+        } catch (archiveErr) {
+          // Fallback: if rename fails, try to delete so the queue doesn't jam.
+          log('warn', 'error', { id, msg: 'Failed to archive IN_PROGRESS file, deleting instead', error: archiveErr.message });
+          try { fs.unlinkSync(inProgressPath); } catch (_) {}
         }
       }
 
@@ -722,6 +753,7 @@ function poll() {
 
     writeErrorFile(errPath, errId, 'invalid_commission', null, '', '', { missingFields });
     log('info', 'state', { id: errId, from: 'PENDING', to: 'ERROR', reason: 'invalid_commission' });
+    registerEvent(errId, 'ERROR', { reason: 'invalid_commission', missingFields });
 
     // Remove the invalid PENDING file so it doesn't loop indefinitely.
     try { fs.unlinkSync(pendingPath); } catch (_) {}
@@ -739,6 +771,9 @@ function poll() {
 
   log('info', 'pickup', { id, title, msg: 'Commission picked up', file: pendingFile });
   log('info', 'state', { id, from: 'PENDING', to: 'IN_PROGRESS' });
+
+  // Register: embed full commission body so success criteria are always recoverable.
+  registerEvent(id, 'COMMISSIONED', { title, goal, body: commissionContent });
 
   openCommissionBlock(id, title, goal);
 
