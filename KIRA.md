@@ -169,6 +169,7 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 | 4: Robustness | 008–009 | `slice/4-robustness` | ACCEPTED, merged to main |
 | 5: launchd auto-start | 010–011 | `slice/5-launchd` | ACCEPTED, merged to main |
 | 6: Dashboard wiring | 013 | `slice/6-dashboard-wiring` | ACCEPTED, merged to main |
+| 7: Heartbeat enrichment | 014 | `slice/7-heartbeat-enrichment` | ACCEPTED, merged to main |
 
 ### Fix commissions
 
@@ -186,12 +187,14 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 
 ### Next up
 
-**Slice 7** — candidates (pick one with Sisko):
+**Slice 8** — in progress: `.bridge/` → `bridge/` rename (commission 015).
+
+**Slice 9** — candidates:
 - **Smart timeout** — activity-based monitoring instead of flat 15-min kill
 - **QA pipeline** — commission Nog and Bashir roles into the review cycle
 - **Token/cost phase tracking** — granular cost by phase (planning/execution/correction)
 
-Next commission ID: **014**
+Next commission ID: **016**
 
 ### Open flags
 
