@@ -166,6 +166,7 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 | 3: Kira's half | 004 | `slice/3-kiras-half` | ACCEPTED, merged to main |
 | 4: Robustness | 008–009 | `slice/4-robustness` | ACCEPTED, merged to main |
 | 5: launchd auto-start | 010–011 | `slice/5-launchd` | ACCEPTED, merged to main |
+| 6: Dashboard wiring | 013 | `slice/6-dashboard-wiring` | ACCEPTED, merged to main |
 
 ### Fix commissions
 
@@ -183,18 +184,17 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 
 ### Next up
 
-**Slice 6** — candidates (pick one with Sisko):
+**Slice 7** — candidates (pick one with Sisko):
 - **Smart timeout** — activity-based monitoring instead of flat 15-min kill
-- **Dashboard wiring** — connect LCARS dashboard to live `.bridge/` data files
 - **QA pipeline** — commission Nog and Bashir roles into the review cycle
 - **Token/cost phase tracking** — granular cost by phase (planning/execution/correction)
 
-Next commission ID: **013**
+Next commission ID: **014**
 
 ### Open flags
 
 - **Watcher must be restarted after code changes** — the running watcher uses the code loaded at startup. After merging watcher.js changes, Sisko must restart the watcher process.
-- **LCARS dashboard not yet in repo** — `lcars-dashboard.html` is in the old Spiderverse/Hormuz parent. Pending move to `repo/dashboard/` and wiring to live data.
+- **Dashboard server not auto-started** — `repo/dashboard/server.js` must be run manually (`node dashboard/server.js` from `repo/`). Consider adding to launchd or a start script.
 - **DEBRIEF.md has 18+ untriaged items** — schedule a triage session with Sisko when convenient.
 - **Old planning docs still named "Bridge of Hormuz"** — files in the old parent folder (Architecture, Capability Map, PRD). Decision needed: rename, move, or leave as historical.
 
