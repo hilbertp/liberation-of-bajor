@@ -28,7 +28,7 @@ Complete the test harness that was deferred in commission 005 (status: PARTIAL).
 
 ## Context
 
-Commission 005 is at `.bridge/queue/005-DONE.md`. The three contract docs were delivered
+Commission 005 is at `bridge/queue/005-DONE.md`. The three contract docs were delivered
 and accepted. The test harness was not started. Pick up on the same branch: `slice/4-contracts`.
 
 ## Tasks
@@ -47,7 +47,7 @@ and accepted. The test harness was not started. Pick up on the same branch: `sli
 1. Test harness exists at the path specified in commission 005.
 2. All tests pass.
 3. Changes committed on `slice/4-contracts`.
-4. Report written to `.bridge/queue/006-DONE.md`.
+4. Report written to `bridge/queue/006-DONE.md`.
 ```
 
 ---
@@ -76,16 +76,16 @@ Unblock commission 007: implement the watcher retry policy using the decided str
 
 ## Context
 
-Commission 007 is at `.bridge/queue/007-DONE.md` (status: BLOCKED). O'Brien presented two
+Commission 007 is at `bridge/queue/007-DONE.md` (status: BLOCKED). O'Brien presented two
 options. Decision: use **fixed interval retry** (3 retries, 10s apart). Rationale: simpler
 to reason about in a local queue; backoff adds complexity without meaningful benefit at
 this scale.
 
 ## Tasks
 
-1. Implement fixed-interval retry in `.bridge/watcher.js`: 3 retries, 10 seconds between
+1. Implement fixed-interval retry in `bridge/watcher.js`: 3 retries, 10 seconds between
    each attempt.
-2. Update `.bridge/bridge.config.json` if any new config fields are needed.
+2. Update `bridge/bridge.config.json` if any new config fields are needed.
 3. Commit on `slice/5-watcher-retry`.
 
 ## Constraints
@@ -98,5 +98,5 @@ this scale.
 1. Watcher retries a failed invocation up to 3 times with 10s intervals.
 2. After 3 failures, watcher writes an ERROR file and moves on.
 3. Changes committed on `slice/5-watcher-retry`.
-4. Report written to `.bridge/queue/008-DONE.md`.
+4. Report written to `bridge/queue/008-DONE.md`.
 ```

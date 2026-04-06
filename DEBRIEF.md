@@ -89,7 +89,7 @@ After triage, items move to their destination and get removed from this file.
 ### 14. Token tracking needs phase-level granularity
 **Observed:** Sisko wants to track and visualize cost not just per commission but per phase: planning (Kira/Cowork), execution (slice work), review & correction (fixes, amendments), housekeeping (merges). He also wants per-slice aggregation (all commissions belonging to one slice grouped) and per-larger-grouping (e.g. all of Layer 3).
 **Why this matters:** Claude is expensive compared to alternatives. Visibility into where tokens burn helps optimize — are corrections eating the budget? Are merges surprisingly costly? Is planning cheap or expensive?
-**Possible action:** (a) Add a `type` field to commission frontmatter (`execution`, `fix`, `housekeeping`) so the watcher can categorize automatically. (b) Use the `references` field to group commissions into slices. (c) Track Kira's planning costs separately (Cowork session tokens aren't visible to the watcher — needs a different mechanism). (d) Build a cost history file (`.bridge/cost-history.json`) that accumulates across watcher sessions. (e) Eventually visualize trends over time.
+**Possible action:** (a) Add a `type` field to commission frontmatter (`execution`, `fix`, `housekeeping`) so the watcher can categorize automatically. (b) Use the `references` field to group commissions into slices. (c) Track Kira's planning costs separately (Cowork session tokens aren't visible to the watcher — needs a different mechanism). (d) Build a cost history file (`bridge/cost-history.json`) that accumulates across watcher sessions. (e) Eventually visualize trends over time.
 
 ### 16. Project economics tracking — ROI proof for customers
 **Observed:** Sisko bills €100/hr to customers. He needs to track: (a) his own hours invested, (b) Claude token costs, (c) estimated human-equivalent hours for Kira and O'Brien roles if they were human staff. The comparison demonstrates speed and cost efficiency — a human PM + senior dev would have taken X hours at Y cost; the AI-augmented team did it in a fraction.
@@ -99,11 +99,11 @@ After triage, items move to their destination and get removed from this file.
 - O'Brien human-equivalent estimate (filled at review time — "a senior dev would take ~4h")
 - Kira human-equivalent estimate (same — "a PM would spend ~2h on this coordination")
 - Claude token cost (from watcher, split by phase: execution, correction, housekeeping)
-**Possible action:** Create `.bridge/economics.json` as the accumulator. Add a `human_equivalent_hours` field to the report evaluation step. Build a time-logging helper for Sisko. Render a summary table per slice and per project. This becomes a key deliverable for customer-facing proposals.
+**Possible action:** Create `bridge/economics.json` as the accumulator. Add a `human_equivalent_hours` field to the report evaluation step. Build a time-logging helper for Sisko. Render a summary table per slice and per project. This becomes a key deliverable for customer-facing proposals.
 
 ### 15. Web dashboard may be needed if terminal output hits its limit
 **Observed:** Sisko said "if we fail, we're gonna have to build an actual dashboard." The terminal is the current visualization layer. If the information density exceeds what a scrolling terminal can convey (especially historical trends, cost charts, slice comparisons), a lightweight HTML dashboard is the natural next step.
-**Possible action:** The data layer being built now (token tracking, queue snapshots, session state) is dashboard-ready. A future commission could render `.bridge/cost-history.json` as a self-contained HTML file that opens in a browser. No server needed — just a static file that reads the JSON.
+**Possible action:** The data layer being built now (token tracking, queue snapshots, session state) is dashboard-ready. A future commission could render `bridge/cost-history.json` as a self-contained HTML file that opens in a browser. No server needed — just a static file that reads the JSON.
 
 ### 17. Timeout is a blunt instrument — activity monitoring is smarter
 **Observed:** Sisko questioned why a 15min kill switch is the right tool. The timeout doesn't distinguish "O'Brien is actively writing files" from "O'Brien is frozen." It kills either way.

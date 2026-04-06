@@ -822,7 +822,7 @@ function crashRecovery() {
  * Returns "001" if the directory is empty or unreadable.
  *
  * This function is purely computational — it does not write any files.
- * Exported so Kira can call it from .bridge/next-id.js.
+ * Exported so Kira can call it from bridge/next-id.js.
  */
 function nextCommissionId(queueDir) {
   let files;
@@ -896,7 +896,7 @@ if (require.main === module) {
 }
 
 // ---------------------------------------------------------------------------
-// Exports — for use by helper scripts (e.g. .bridge/next-id.js)
+// Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
 module.exports = { nextCommissionId, getQueueSnapshot };

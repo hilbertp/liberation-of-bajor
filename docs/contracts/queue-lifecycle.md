@@ -9,7 +9,7 @@
 
 ## Overview
 
-The queue is a directory of markdown files at `.bridge/queue/`. Each file represents one commission and moves through a defined lifecycle. State is visible as a filename suffix — anyone can inspect the queue by opening the directory in Finder.
+The queue is a directory of markdown files at `bridge/queue/`. Each file represents one commission and moves through a defined lifecycle. State is visible as a filename suffix — anyone can inspect the queue by opening the directory in Finder.
 
 ---
 
@@ -116,12 +116,12 @@ After writing a commission with a known ID, Kira polls for:
 
 Kira polls **by known ID**, not by scanning for any new file in the directory. Scanning is weaker and risks racing with prior commissions that resolve late.
 
-Optional hygiene: before polling for the report, Kira reads `.bridge/heartbeat.json` to confirm the watcher is alive. The heartbeat file contains: timestamp, status (`idle`/`processing`), current commission ID, elapsed time, and total processed count.
+Optional hygiene: before polling for the report, Kira reads `bridge/heartbeat.json` to confirm the watcher is alive. The heartbeat file contains: timestamp, status (`idle`/`processing`), current commission ID, elapsed time, and total processed count.
 
 ---
 
 ## Queue and git
 
-The queue directory is tracked in git. Every commission and report is a permanent record. Cleanup (moving files to `.bridge/archive/`) is a manual or scripted operation — it does not happen automatically.
+The queue directory is tracked in git. Every commission and report is a permanent record. Cleanup (moving files to `bridge/archive/`) is a manual or scripted operation — it does not happen automatically.
 
-**Why:** Inspectability is non-negotiable. Philipp can reconstruct the full history of what was commissioned, executed, and reported by reading the git log of `.bridge/queue/`.
+**Why:** Inspectability is non-negotiable. Philipp can reconstruct the full history of what was commissioned, executed, and reported by reading the git log of `bridge/queue/`.

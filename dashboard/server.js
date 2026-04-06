@@ -7,8 +7,8 @@ const path = require('path');
 const PORT       = 4747;
 const HOST       = '127.0.0.1';
 const REPO_ROOT  = path.resolve(__dirname, '..');
-const QUEUE_DIR  = path.join(REPO_ROOT, '.bridge', 'queue');
-const HEARTBEAT  = path.join(REPO_ROOT, '.bridge', 'heartbeat.json');
+const QUEUE_DIR  = path.join(REPO_ROOT, 'bridge', 'queue');
+const HEARTBEAT  = path.join(REPO_ROOT, 'bridge', 'heartbeat.json');
 const DASHBOARD  = path.join(__dirname, 'lcars-dashboard.html');
 
 // ── Frontmatter parser ───────────────────────────────────────────────────────

@@ -88,9 +88,9 @@
 **What Kira caught:** Accepted based on report. Did not test any criteria independently.
 **What Kira missed:**
 - The ENOENT bug (visible in the terminal when 010 was processed). This was a direct consequence of the crash recovery design interacting with the watcher's cleanup code.
-- `next-id.js` — did it actually work? Nobody ran `node .bridge/next-id.js` to verify.
+- `next-id.js` — did it actually work? Nobody ran `node bridge/next-id.js` to verify.
 - Validation on intake — did Kira ever drop a malformed commission to see if it gets rejected? No.
-**What a QA role would have caught:** "Run `node .bridge/next-id.js`. Drop a commission with missing frontmatter. Kill the watcher mid-commission, restart it, verify recovery." All basic acceptance tests, none performed.
+**What a QA role would have caught:** "Run `node bridge/next-id.js`. Drop a commission with missing frontmatter. Kill the watcher mid-commission, restart it, verify recovery." All basic acceptance tests, none performed.
 **Verdict: Mostly correct but shipped a bug (ENOENT) that was visible to Philipp.**
 
 ---

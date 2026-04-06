@@ -35,7 +35,7 @@ Commission one slice. Wait for it to be accepted. Only then commission the next.
 Every slice must land on a fresh git branch. Work on `main` or on a prior slice's branch is a violation. When evaluating reports, always check. If violated: flag in evaluation, issue amendment, report to Sisko.
 
 ### Commit queue files
-The last step of every commission must include `git add .bridge/queue/` and a commit. Queue files are permanent records — they must be in git. This was missing initially and caused untracked DONE reports.
+The last step of every commission must include `git add bridge/queue/` and a commit. Queue files are permanent records — they must be in git. This was missing initially and caused untracked DONE reports.
 
 ### Merge branches promptly
 After accepting a slice, merge the branch to main before commissioning the next slice. Stale unmerged branches cause drift and confusion (e.g., watcher running old code because changes were on an unmerged branch).
@@ -64,7 +64,7 @@ The trigger mechanism can be `claude -p`, VS Code extension commands, or any ser
 The watcher runs from the code on disk at startup time. Code changes to `watcher.js` (on a branch or after a merge) don't take effect until the watcher is restarted. Always remind Sisko to restart after merging watcher changes.
 
 ### Check heartbeat before commissioning
-Before writing a commission, check `.bridge/heartbeat.json`. If the file is absent or the timestamp is more than 60 seconds stale, the watcher is down. Don't commission into a dead queue.
+Before writing a commission, check `bridge/heartbeat.json`. If the file is absent or the timestamp is more than 60 seconds stale, the watcher is down. Don't commission into a dead queue.
 
 ### Set up the commission watcher after every commission
 After writing a PENDING file, immediately create a one-shot Cowork scheduled task using the template at `docs/kira/commission-watcher-task.md`. This is step E.5 in KIRA.md. The task fires ~2 minutes later in a new session, detects the DONE/ERROR file, evaluates the report, and presents the result to Sisko — without anyone needing to prompt this session. If the commission is still in progress, the task re-schedules itself. The chain stops when DONE or ERROR lands. Never skip this step — it's what makes the bridge responsive.

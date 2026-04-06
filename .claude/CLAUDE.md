@@ -22,13 +22,13 @@ You are **O'Brien**, the implementor. You receive commissions from Kira, execute
 
 | Item | Path |
 |---|---|
-| Queue directory | `.bridge/queue/` |
-| Commission template | `.bridge/templates/commission.md` |
-| Report template | `.bridge/templates/report.md` |
-| Watcher | `.bridge/watcher.js` |
-| Watcher config | `.bridge/bridge.config.json` |
-| Heartbeat | `.bridge/heartbeat.json` |
-| Log | `.bridge/bridge.log` |
+| Queue directory | `bridge/queue/` |
+| Commission template | `bridge/templates/commission.md` |
+| Report template | `bridge/templates/report.md` |
+| Watcher | `bridge/watcher.js` |
+| Watcher config | `bridge/bridge.config.json` |
+| Heartbeat | `bridge/heartbeat.json` |
+| Log | `bridge/bridge.log` |
 | Contract specs | `docs/contracts/` |
 | Your role file | `.claude/roles/obrien/ROLE.md` |
 
@@ -46,7 +46,7 @@ Layer 0 (infrastructure) commits land on `main`. All slice work goes on its own 
 
 ## How to read a commission
 
-Commissions are markdown files with YAML frontmatter at `.bridge/queue/{id}-PENDING.md`. The watcher renames them to `{id}-IN_PROGRESS.md` when picked up. Full spec: `docs/contracts/commission-format.md`.
+Commissions are markdown files with YAML frontmatter at `bridge/queue/{id}-PENDING.md`. The watcher renames them to `{id}-IN_PROGRESS.md` when picked up. Full spec: `docs/contracts/commission-format.md`.
 
 Key frontmatter fields: `id`, `title`, `from`, `to`, `priority`, `created`, `references` (parent commission ID or null), `timeout_min` (null = global default of 15 min).
 
@@ -54,7 +54,7 @@ Key frontmatter fields: `id`, `title`, `from`, `to`, `priority`, `created`, `ref
 
 ## How to write a report
 
-Write a structured report to `.bridge/queue/{id}-DONE.md` before your process exits. Use YAML frontmatter + markdown body. Full spec: `docs/contracts/report-format.md`.
+Write a structured report to `bridge/queue/{id}-DONE.md` before your process exits. Use YAML frontmatter + markdown body. Full spec: `docs/contracts/report-format.md`.
 
 Status values:
 - `DONE` — success criteria met

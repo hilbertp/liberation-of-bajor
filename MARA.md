@@ -34,13 +34,13 @@ You do NOT:
 
 | Item | Path |
 |---|---|
-| Queue directory | `.bridge/queue/` |
-| Commission template | `.bridge/templates/commission.md` |
-| Report template | `.bridge/templates/report.md` |
-| Watcher | `.bridge/watcher.js` |
-| Watcher config | `.bridge/bridge.config.json` |
-| Heartbeat | `.bridge/heartbeat.json` |
-| Log | `.bridge/bridge.log` |
+| Queue directory | `bridge/queue/` |
+| Commission template | `bridge/templates/commission.md` |
+| Report template | `bridge/templates/report.md` |
+| Watcher | `bridge/watcher.js` |
+| Watcher config | `bridge/bridge.config.json` |
+| Heartbeat | `bridge/heartbeat.json` |
+| Log | `bridge/bridge.log` |
 | Contract specs | `docs/contracts/` |
 | O'Brien's anchor | `.claude/CLAUDE.md` |
 
@@ -48,7 +48,7 @@ You do NOT:
 
 ## D. ID assignment rule
 
-Before writing a new commission, scan `.bridge/queue/` for all files matching `{id}-*.md` across all states (PENDING, IN_PROGRESS, DONE, ERROR). Find the highest numeric ID. Increment by one. Zero-pad to three digits.
+Before writing a new commission, scan `bridge/queue/` for all files matching `{id}-*.md` across all states (PENDING, IN_PROGRESS, DONE, ERROR). Find the highest numeric ID. Increment by one. Zero-pad to three digits.
 
 **Example:** If `003-DONE.md` is the highest file in the queue, the next commission ID is `004`.
 
@@ -58,13 +58,13 @@ Before writing a new commission, scan `.bridge/queue/` for all files matching `{
 
 ## E. Commission writing workflow
 
-1. **Check the heartbeat** — open `.bridge/heartbeat.json` and check the `timestamp` field. If the file is absent or the timestamp is more than 60 seconds old, the watcher is down. Do not write a commission until the watcher is restarted. Investigating a stale heartbeat is outside Kira's scope — flag it to Philipp.
+1. **Check the heartbeat** — open `bridge/heartbeat.json` and check the `timestamp` field. If the file is absent or the timestamp is more than 60 seconds old, the watcher is down. Do not write a commission until the watcher is restarted. Investigating a stale heartbeat is outside Kira's scope — flag it to Philipp.
 
 2. **Assign the next ID** — follow Section D.
 
-3. **Write `{id}-PENDING.md`** using the commission template at `.bridge/templates/commission.md`. Fill all frontmatter fields. The `from` field is always `kira`; `to` is always `obrien`. For an amendment, set `references` to the parent commission ID (see Section H).
+3. **Write `{id}-PENDING.md`** using the commission template at `bridge/templates/commission.md`. Fill all frontmatter fields. The `from` field is always `kira`; `to` is always `obrien`. For an amendment, set `references` to the parent commission ID (see Section H).
 
-4. **Save the file to `.bridge/queue/`** — the watcher polls for new PENDING files and picks it up automatically. No further action from Kira is needed.
+4. **Save the file to `bridge/queue/`** — the watcher polls for new PENDING files and picks it up automatically. No further action from Kira is needed.
 
 ---
 
@@ -74,15 +74,15 @@ After writing a commission, wait for O'Brien's report to appear.
 
 **How to poll:**
 
-1. Read `.bridge/heartbeat.json` — confirm the bridge is still live before waiting.
-2. Check for **`{id}-DONE.md`** by exact path: `.bridge/queue/{id}-DONE.md`.
+1. Read `bridge/heartbeat.json` — confirm the bridge is still live before waiting.
+2. Check for **`{id}-DONE.md`** by exact path: `bridge/queue/{id}-DONE.md`.
 3. Also check for **`{id}-ERROR.md`** at the same location. An ERROR file means the watcher failed to invoke O'Brien (infrastructure failure, not a O'Brien failure).
 4. Whichever file appears first is the result.
 5. Repeat every **30–60 seconds**. The global timeout is 15 minutes (overridable per commission via `timeout_min`).
 
 **Why exact path?** The commission ID is assigned by Kira — she knows it deterministically. Polling by exact path is unambiguous and avoids false positives from unrelated queue activity.
 
-If neither DONE nor ERROR appears within the timeout window, check the watcher log at `.bridge/bridge.log` before re-commissioning.
+If neither DONE nor ERROR appears within the timeout window, check the watcher log at `bridge/bridge.log` before re-commissioning.
 
 ---
 
@@ -106,7 +106,7 @@ When `{id}-DONE.md` appears, read it and check the `status` field:
 **If `{id}-ERROR.md` appears instead:**
 
 - This is an infrastructure failure (the watcher could not invoke O'Brien, or O'Brien's process crashed before writing a report).
-- Do not re-commission immediately. Check `.bridge/bridge.log` to diagnose.
+- Do not re-commission immediately. Check `bridge/bridge.log` to diagnose.
 - Flag to Philipp if the cause is unclear.
 
 Full evaluation rubric: `docs/kira/evaluation-rubric.md`
@@ -125,7 +125,7 @@ An amendment is a follow-up commission that continues or corrects prior work.
 2. Copy the commission template.
 3. Set `references: "{parent_id}"` to the direct parent commission ID.
 4. In the body, explain exactly what remains to be done, what changed, or what decision O'Brien was waiting on.
-5. Write it to `.bridge/queue/{new_id}-PENDING.md` and let the watcher pick it up.
+5. Write it to `bridge/queue/{new_id}-PENDING.md` and let the watcher pick it up.
 
 **Amendment vs. new commission:**
 

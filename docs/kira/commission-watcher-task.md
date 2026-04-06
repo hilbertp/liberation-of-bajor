@@ -40,7 +40,7 @@ Check whether commission {{COMMISSION_ID}} has been completed by O'Brien.
 ## Steps
 
 1. Mount the project directory: `{{PROJECT_PATH}}`
-2. Check if either of these files exists in `repo/.bridge/queue/`:
+2. Check if either of these files exists in `repo/bridge/queue/`:
    - `{{COMMISSION_ID}}-DONE.md`
    - `{{COMMISSION_ID}}-ERROR.md`
 3. Also check for `{{COMMISSION_ID}}-IN_PROGRESS.md` — if present, O'Brien is still working. Skip to step 6.
@@ -50,7 +50,7 @@ Check whether commission {{COMMISSION_ID}} has been completed by O'Brien.
 4. Read `{{COMMISSION_ID}}-DONE.md` (O'Brien's report).
 5. Read the original commission. It may be at `{{COMMISSION_ID}}-PENDING.md` or may have been
    renamed to `{{COMMISSION_ID}}-IN_PROGRESS.md` by the watcher. If neither exists, check git
-   history: `git log --all --oneline -- '.bridge/queue/{{COMMISSION_ID}}-*'` to find the original.
+   history: `git log --all --oneline -- 'bridge/queue/{{COMMISSION_ID}}-*'` to find the original.
 6. Evaluate the report against the success criteria in the commission:
    - Check each success criterion against O'Brien's "What succeeded" and "Files changed" sections.
    - If ALL criteria are met: report **ACCEPTED** to Sisko with a short summary.

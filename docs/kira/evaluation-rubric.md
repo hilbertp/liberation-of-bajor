@@ -11,7 +11,7 @@ A report is **ACCEPTED** when all of the following are true:
 1. **All success criteria are met** — every checkable condition in the commission's "Success criteria" section is satisfied.
 2. **Deliverables exist on disk** — files listed in "Files changed" are present at the stated paths and contain the expected content.
 3. **Work is committed on the correct branch** — O'Brien's changes are committed on the branch named in the commission (e.g. `slice/3-kiras-half`), not on `main` or a prior branch.
-4. **Report is written and committed** — the `{id}-DONE.md` file exists in `.bridge/queue/` and is committed to git.
+4. **Report is written and committed** — the `{id}-DONE.md` file exists in `bridge/queue/` and is committed to git.
 5. **No open blockers** — "Blockers / Questions for Kira" section says "None." or all listed questions are answered within the report.
 
 When all five hold: mark ACCEPTED and take no further action (unless you want to send an acknowledgment commission).
