@@ -196,13 +196,20 @@ There is no hard limit on commission length or complexity for v1. However: if a 
 
 ### Next up
 
-**Slice 11** — candidates:
-- **Nog code review gate** — linting, best practices, anti-patterns, readability over cleverness, no unnecessary refactor, small-enough change scope
-- **Smart timeout** — activity-based monitoring instead of flat 15-min kill
-- **QA pipeline** — commission Nog and Bashir roles into the review cycle
-- **Token/cost phase tracking** — granular cost by phase (planning/execution/correction)
+All original PRD capabilities (Layers 0–4) are complete. Slices 11+ address new capabilities beyond v1.
 
-Next commission ID: **018**
+| Slice | Title | Capabilities | Priority |
+|---|---|---|---|
+| **11** | **Nog code review gate** | Nog ROLE.md. When a branch is ACCEPTED by Kira, a Nog commission runs on it: linting, best practices, anti-patterns, readability over cleverness, no unnecessary refactor. Nog posts PASS or FAIL. Watcher adds CODE_REVIEW stage to register. | 🔴 Now |
+| **12** | **Register-wired dashboard** | server.js aggregates register.jsonl. Mission log table shows real history. Economics panel shows real token costs (already in register DONE events). Goal field visible in mission pipeline. | 🔴 Now |
+| **13** | **REVIEWED event + review state wiring** | kira-commission-watch writes REVIEWED event to register after evaluation. Dashboard AWAITING_REVIEW / IN_REVIEW stages wired to register events rather than heartbeat heuristics. | 🟡 Soon |
+| **14** | **Smart timeout** | Replace flat 15-min kill with activity-based monitoring: kill only if no stdout activity for N minutes (configurable). Prevents killing slow-but-running commissions. | 🟡 Soon |
+| **15** | **Queue cleanup** | Script or watcher hook to move DONE/COMMISSION/ERROR files older than N days to `bridge/archive/`. Active queue stays clean. | 🟢 Later |
+| **16** | **Bashir QA role** | Bashir ROLE.md. Automated test hooks after Nog's CODE_REVIEW PASS. | 🟢 Later |
+
+Next commission ID: **020**
+
+> Commission IDs 018–019 used for watcher timing probes (test commissions, not slices).
 
 ### Open flags
 
