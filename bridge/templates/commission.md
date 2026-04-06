@@ -3,6 +3,10 @@
 id: ""
 <!-- title: Short human-readable title for this commission. -->
 title: ""
+<!-- goal: One sentence describing what Sisko gets when this commission succeeds.
+     Outcome-focused ("X will be possible / visible / working"), not technical.
+     Displayed in the watcher terminal. Required for new commissions. -->
+goal: ""
 from: kira
 to: obrien
 <!-- priority: low | normal | high | spike -->

@@ -263,14 +263,17 @@ function printStartupBlock(recoveryActions) {
 // ---------------------------------------------------------------------------
 
 /**
- * openCommissionBlock(id, title)
+ * openCommissionBlock(id, title, goal)
  *
  * Prints the opening of a commission lifecycle block. Called at pickup.
  */
-function openCommissionBlock(id, title) {
+function openCommissionBlock(id, title, goal) {
   const titleStr = title ? `${SYM.sep}"${title}"` : '';
   print(`${B.tl}${B.sng.repeat(W - 1)}`);
   print(`${B.vert}  ${SYM.right} Commission ${id}${titleStr}`);
+  if (goal) {
+    print(`${B.vert}    Goal: ${goal}`);
+  }
   print(`${B.vert}    Queued${SYM.arrow}Handed off to O'Brien`);
   print(`${B.vert}`);
 }
@@ -362,6 +365,7 @@ let heartbeatState = {
   status: 'idle',
   current_commission: null,
   current_commission_title: null,
+  current_commission_goal: null,
   pickupTime: null,   // internal — not written to file
   processed_total: 0,
 };
@@ -386,6 +390,7 @@ function writeHeartbeat() {
     status: heartbeatState.status,
     current_commission: heartbeatState.current_commission,
     current_commission_title: heartbeatState.current_commission_title,
+    current_commission_goal: heartbeatState.current_commission_goal,
     commission_elapsed_seconds: elapsedSeconds,
     processed_total: heartbeatState.processed_total,
     queue,
@@ -418,13 +423,14 @@ let idlePrintCounter = 0;
  * Always cleans up the IN_PROGRESS file on completion (existence-checked to
  * avoid ENOENT when O'Brien's crash recovery already handled it).
  */
-function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title) {
+function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title, goal) {
   const prompt = commissionContent + '\n\nWrite your report to: ' + donePath;
 
   const pickupTime = Date.now();
   heartbeatState.status = 'processing';
   heartbeatState.current_commission = id;
   heartbeatState.current_commission_title = title || null;
+  heartbeatState.current_commission_goal = goal || null;
   heartbeatState.pickupTime = pickupTime;
   writeHeartbeat();
 
@@ -517,6 +523,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
       heartbeatState.status = 'idle';
       heartbeatState.current_commission = null;
       heartbeatState.current_commission_title = null;
+      heartbeatState.current_commission_goal = null;
       heartbeatState.pickupTime = null;
       heartbeatState.processed_total += 1;
       writeHeartbeat();
@@ -673,6 +680,7 @@ function poll() {
     ? timeoutMin * 60 * 1000
     : config.timeoutMs;
   const title = (meta && meta.title) || null;
+  const goal  = (meta && meta.goal && meta.goal.trim()) || null;
 
   // Derive sibling paths.
   const inProgressPath = path.join(QUEUE_DIR, `${id}-IN_PROGRESS.md`);
@@ -732,12 +740,12 @@ function poll() {
   log('info', 'pickup', { id, title, msg: 'Commission picked up', file: pendingFile });
   log('info', 'state', { id, from: 'PENDING', to: 'IN_PROGRESS' });
 
-  openCommissionBlock(id, title);
+  openCommissionBlock(id, title, goal);
 
   processing = true;
 
   // Invoke O'Brien asynchronously — event loop stays live.
-  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title);
+  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title, goal);
 }
 
 // ---------------------------------------------------------------------------
