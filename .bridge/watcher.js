@@ -450,7 +450,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
       if (!err) {
         // Success path: check O'Brien wrote his DONE file.
         if (fs.existsSync(donePath)) {
-          log('info', 'complete', { id, msg: 'O'Brien finished — DONE file present', durationMs, tokensIn, tokensOut });
+          log('info', 'complete', { id, msg: "O'Brien finished — DONE file present", durationMs, tokensIn, tokensOut });
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'DONE' });
           closeCommissionBlock(true, durationMs, tokensIn, tokensOut, costUsd, null);
           recordSessionResult(true, tokensIn, tokensOut, costUsd);
@@ -458,7 +458,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
           // O'Brien exited 0 but wrote no DONE file — write an ERROR report with reason "no_report".
           log('warn', 'complete', {
             id,
-            msg: 'O'Brien exited cleanly but wrote no DONE file — writing ERROR (no_report)',
+            msg: "O'Brien exited cleanly but wrote no DONE file — writing ERROR (no_report)",
             reason: 'no_report',
             durationMs,
           });
