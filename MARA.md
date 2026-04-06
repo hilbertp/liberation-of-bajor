@@ -150,3 +150,70 @@ Worked examples: `docs/mara/amendment-examples.md`
 ## J. Commission complexity note
 
 There is no hard limit on commission length or complexity for v1. However: if a commission's context exceeds what fits cleanly in a single file, reference external files by path in the commission body rather than inlining all content. Rook can read any file on disk — prefer pointers over large embedded blocks. A formal complexity ceiling may be added in a future slice.
+
+---
+
+## K. Project Status
+
+*Updated: 2026-04-06 by Mara*
+
+### Accepted slices
+
+| Slice | Commission | Branch | Status |
+|---|---|---|---|
+| 1: Contracts | 002 | `slice/1-contracts` | ACCEPTED, merged to main |
+| 2: Production watcher | 003 | `slice/2-production-watcher` | ACCEPTED, merged to main |
+| 3: Mara's half | 004 | `slice/3-maras-half` | ACCEPTED, merged to main |
+
+### Fix commissions
+
+| ID | Title | Branch | Status |
+|---|---|---|---|
+| 005 | Human-readable watcher stdout | `fix/readable-stdout` | ACCEPTED, superseded by 006 |
+| 006 | Richer stdout (colors, title, progress) | `fix/readable-stdout-v2` | ACCEPTED, merged to main |
+| 007 | Merge all pending branches | (on main) | ACCEPTED |
+
+### Next up
+
+**Slice 4: Robustness** — Crash recovery (3.1), ID management (3.2), hardened error handling (3.3), validation on intake (3.4). These harden what exists — no new functionality.
+
+### Open flags
+
+- **Watcher must be restarted after code changes** — the running watcher uses the code loaded at startup. After merging watcher.js changes, Philipp must restart the terminal process.
+- **launchd auto-start deferred to Slice 5** — until then, the watcher requires a persistent terminal session.
+- **CLAUDE.md absolute path stash** — the stashed path fix on `slice/1-contracts` may not have been applied. Minor: Rook gets `cwd` from the watcher and doesn't need the absolute path.
+
+### Key project references (outside the repo)
+
+These files live in the parent Hormuz directory, not in this repo:
+
+| Item | Path (relative to parent Hormuz folder) |
+|---|---|
+| PRD | `PRD — Bridge of Hormuz v2.md` |
+| Capability Map | `Capability Map — Bridge of Hormuz.md` |
+| Architecture | `Architecture — Bridge of Hormuz v1.md` |
+| Mara role definition | `.claude/roles/mara/ROLE.md` |
+| Mara learning (cross-project) | `.claude/roles/mara/LEARNING.md` |
+| All roles | `.claude/roles/` |
+
+---
+
+## L. Memory system
+
+Mara uses a two-layer memory system:
+
+**Layer 1 — Project memory** (this section, K). Lives in the project repo. Tracks what's been done, what's next, open flags, decisions. Updated by Mara when significant state changes occur. A fresh Mara session on this project reads MARA.md and knows where things stand.
+
+**Layer 2 — Cross-project learning** (`.claude/roles/mara/LEARNING.md`). Lives alongside the role definition. Contains behavioral patterns Philipp has taught — communication style, delivery discipline, things to avoid. A fresh Mara session on any project reads ROLE.md + LEARNING.md and inherits all calibration.
+
+When starting a new session on this project: read MARA.md sections A–J for operations, section K for current state, then LEARNING.md for behavioral calibration.
+
+---
+
+## M. Debrief staging
+
+During development, Mara captures observations in `DEBRIEF.md` at the project root. These are raw items — friction, patterns, things that worked or broke. They stay untriaged until Philipp initiates a debrief conversation.
+
+In the debrief, each item gets routed to its permanent home: LEARNING.md (cross-project behavior), ROLE.md (role definition), a skill (new capability), project-only (stays here), or discarded.
+
+Mara should capture items as they happen, not batch them. If the debrief file has 8+ untriaged items or a major milestone is reached, suggest a debrief to Philipp.
