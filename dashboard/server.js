@@ -9,6 +9,7 @@ const HOST       = process.env.DASHBOARD_HOST ?? '0.0.0.0';
 const REPO_ROOT  = path.resolve(__dirname, '..');
 const QUEUE_DIR  = path.join(REPO_ROOT, 'bridge', 'queue');
 const HEARTBEAT  = path.join(REPO_ROOT, 'bridge', 'heartbeat.json');
+const REGISTER   = path.join(REPO_ROOT, 'bridge', 'register.jsonl');
 const DASHBOARD  = path.join(__dirname, 'lcars-dashboard.html');
 
 // ── Frontmatter parser ───────────────────────────────────────────────────────
@@ -40,6 +41,16 @@ function parseFrontmatter(text) {
   return result;
 }
 
+// ── Register reader ──────────────────────────────────────────────────────────
+function readRegister() {
+  try {
+    const raw = fs.readFileSync(REGISTER, 'utf8');
+    return raw.split('\n').filter(l => l.trim()).map(l => {
+      try { return JSON.parse(l); } catch (_) { return null; }
+    }).filter(Boolean);
+  } catch (_) { return []; }
+}
+
 // ── Bridge data builder ──────────────────────────────────────────────────────
 function buildBridgeData() {
   // Heartbeat
@@ -56,6 +67,46 @@ function buildBridgeData() {
       processed_total:           raw.processed_total ?? 0,
     };
   } catch (_) { /* file missing or malformed → keep defaults */ }
+
+  // Register events
+  const events = readRegister();
+
+  // Index COMMISSIONED events by id for goal lookup and recent title
+  const commissioned = {};
+  for (const ev of events) {
+    if (ev.event === 'COMMISSIONED') commissioned[ev.id] = ev;
+  }
+
+  // Build recent (last 10 completed) and economics from DONE/ERROR events
+  const completedMap = {};
+  const economics = { totalTokensIn: 0, totalTokensOut: 0, totalCostUsd: 0, totalCommissions: 0 };
+  for (const ev of events) {
+    if (ev.event === 'DONE' || ev.event === 'ERROR') {
+      completedMap[ev.id] = {
+        id:          ev.id,
+        title:       commissioned[ev.id]?.title ?? null,
+        outcome:     ev.event,
+        durationMs:  ev.durationMs  ?? null,
+        tokensIn:    ev.tokensIn    ?? null,
+        tokensOut:   ev.tokensOut   ?? null,
+        costUsd:     ev.costUsd     ?? null,
+        completedAt: ev.ts          ?? null,
+      };
+      if (ev.event === 'DONE') {
+        economics.totalTokensIn  += ev.tokensIn  ?? 0;
+        economics.totalTokensOut += ev.tokensOut ?? 0;
+        economics.totalCostUsd   += ev.costUsd   ?? 0;
+        economics.totalCommissions++;
+      }
+    }
+  }
+  const recent = Object.values(completedMap)
+    .sort((a, b) => {
+      if (!a.completedAt) return 1;
+      if (!b.completedAt) return -1;
+      return new Date(b.completedAt) - new Date(a.completedAt);
+    })
+    .slice(0, 10);
 
   // Queue files
   let files = [];
@@ -84,13 +135,18 @@ function buildBridgeData() {
       fm = parseFrontmatter(content);
     } catch (_) {}
 
+    const id = fm.id ?? match[1];
+    const goalFromRegister = commissioned[id]?.goal ?? null;
+    const goalFromFm       = fm.goal ?? null;
+
     commissions.push({
-      id:        fm.id        ?? match[1],
+      id,
       title:     fm.title     ?? filename,
       state,
       from:      fm.from      ?? null,
       created:   fm.created   ?? null,
       completed: fm.completed ?? null,
+      goal:      goalFromRegister ?? goalFromFm,
     });
   }
 
@@ -102,7 +158,7 @@ function buildBridgeData() {
     return b.id.localeCompare(a.id);
   });
 
-  return { heartbeat, queue, commissions };
+  return { heartbeat, queue, commissions, recent, economics };
 }
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
