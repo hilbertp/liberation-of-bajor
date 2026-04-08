@@ -4,8 +4,8 @@ const http = require('http');
 const fs   = require('fs');
 const path = require('path');
 
-const PORT       = 4747;
-const HOST       = '127.0.0.1';
+const PORT       = process.env.DASHBOARD_PORT ? parseInt(process.env.DASHBOARD_PORT, 10) : 4747;
+const HOST       = process.env.DASHBOARD_HOST ?? '0.0.0.0';
 const REPO_ROOT  = path.resolve(__dirname, '..');
 const QUEUE_DIR  = path.join(REPO_ROOT, 'bridge', 'queue');
 const HEARTBEAT  = path.join(REPO_ROOT, 'bridge', 'heartbeat.json');
@@ -119,10 +119,22 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/bridge') {
+    const corsHeaders = {
+      'Access-Control-Allow-Origin':  '*',
+      'Access-Control-Allow-Methods': 'GET',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders);
+      res.end();
+      return;
+    }
+
     let data;
     try { data = buildBridgeData(); }
     catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); return; }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
     res.end(JSON.stringify(data));
     return;
   }
