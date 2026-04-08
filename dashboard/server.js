@@ -51,6 +51,12 @@ function readRegister() {
   } catch (_) { return []; }
 }
 
+// ── Register writer ──────────────────────────────────────────────────────────
+function writeRegisterEvent(event) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n';
+  fs.appendFileSync(REGISTER, line, 'utf8');
+}
+
 // ── Bridge data builder ──────────────────────────────────────────────────────
 function buildBridgeData() {
   // Heartbeat
@@ -79,6 +85,7 @@ function buildBridgeData() {
 
   // Build recent (last 10 completed) and economics from DONE/ERROR events
   const completedMap = {};
+  const reviewedMap  = {};
   const economics = { totalTokensIn: 0, totalTokensOut: 0, totalCostUsd: 0, totalCommissions: 0 };
   for (const ev of events) {
     if (ev.event === 'DONE' || ev.event === 'ERROR') {
@@ -99,6 +106,9 @@ function buildBridgeData() {
         economics.totalCommissions++;
       }
     }
+    if (ev.event === 'REVIEWED') {
+      reviewedMap[ev.id] = ev.verdict;
+    }
   }
   const recent = Object.values(completedMap)
     .sort((a, b) => {
@@ -106,7 +116,15 @@ function buildBridgeData() {
       if (!b.completedAt) return -1;
       return new Date(b.completedAt) - new Date(a.completedAt);
     })
-    .slice(0, 10);
+    .slice(0, 10)
+    .map(entry => {
+      const verdict = reviewedMap[entry.id];
+      let reviewStatus;
+      if (verdict === 'ACCEPTED')           reviewStatus = 'accepted';
+      else if (verdict === 'AMENDMENT_REQUIRED') reviewStatus = 'amendment_required';
+      else                                  reviewStatus = 'waiting_for_review';
+      return { ...entry, reviewStatus };
+    });
 
   // Queue files
   let files = [];
@@ -192,6 +210,63 @@ const server = http.createServer((req, res) => {
     catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); return; }
     res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
     res.end(JSON.stringify(data));
+    return;
+  }
+
+  if (pathname === '/api/bridge/review') {
+    const corsHeaders = {
+      'Access-Control-Allow-Origin':  '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders);
+      res.end();
+      return;
+    }
+
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'text/plain', ...corsHeaders });
+      res.end('Method Not Allowed');
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      let payload;
+      try { payload = JSON.parse(body); }
+      catch (_) {
+        res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        return;
+      }
+
+      const { id, verdict, notes } = payload;
+      if (!id || !verdict) {
+        res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({ error: 'id and verdict are required' }));
+        return;
+      }
+      const validVerdicts = ['ACCEPTED', 'AMENDMENT_REQUIRED'];
+      if (!validVerdicts.includes(verdict)) {
+        res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({ error: `verdict must be one of: ${validVerdicts.join(', ')}` }));
+        return;
+      }
+
+      try {
+        writeRegisterEvent({ id, event: 'REVIEWED', verdict, ...(notes != null ? { notes } : {}) });
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({ error: String(err) }));
+        return;
+      }
+
+      res.writeHead(201, { 'Content-Type': 'application/json', ...corsHeaders });
+      res.end(JSON.stringify({ ok: true }));
+    });
     return;
   }
 
