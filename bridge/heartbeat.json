@@ -1,7 +1,15 @@
 {
-  "ts": "2026-04-06T19:31:56.045Z",
+  "ts": "2026-04-08T23:55:54.041Z",
   "status": "processing",
-  "current_commission": "015",
-  "commission_elapsed_seconds": 0,
-  "processed_total": 1
+  "current_commission": "028",
+  "current_commission_title": "Resolve merge conflict: slice/26-evaluator into main",
+  "current_commission_goal": "The evaluator code lands on main with no conflicts and the watcher can be restarted.",
+  "commission_elapsed_seconds": 189,
+  "processed_total": 3,
+  "queue": {
+    "waiting": 0,
+    "active": 2,
+    "done": 20,
+    "error": 2
+  }
 }

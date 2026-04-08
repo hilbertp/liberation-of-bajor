@@ -258,6 +258,8 @@ function printStartupBlock(recoveryActions) {
         print(`    ${C.yellow}${SYM.check}${C.reset} Commission ${action.id}${SYM.dash}cleared stale work-in-progress (already failed)`);
       } else if (action.type === 'requeued') {
         print(`    ${C.yellow}${SYM.back}${C.reset} Commission ${action.id}${SYM.dash}re-queued interrupted commission`);
+      } else if (action.type === 'requeued_eval') {
+        print(`    ${C.yellow}${SYM.back}${C.reset} Commission ${action.id}${SYM.dash}re-queued interrupted evaluation`);
       }
     }
   }
@@ -645,6 +647,434 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
 }
 
 // ---------------------------------------------------------------------------
+// Evaluator invocation
+// ---------------------------------------------------------------------------
+
+/**
+ * callReviewAPI(id, verdict, reason)
+ *
+ * Fires a POST to /api/bridge/review. Non-blocking — failures are logged but
+ * do not affect evaluator completion.
+ */
+function callReviewAPI(id, verdict, reason) {
+  try {
+    const http = require('http');
+    const body = JSON.stringify({ id: String(id), verdict, reason: reason || '' });
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: 4747,
+      path: '/api/bridge/review',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      log('info', 'review_api', { id, verdict, status: res.statusCode });
+    });
+    req.on('error', (err) => {
+      log('warn', 'review_api', { id, msg: 'POST /api/bridge/review failed', error: err.message });
+    });
+    req.write(body);
+    req.end();
+  } catch (err) {
+    log('warn', 'review_api', { id, msg: 'Failed to call review API', error: err.message });
+  }
+}
+
+/**
+ * countReviewedCycles(rootId)
+ *
+ * Reads register.jsonl and counts REVIEWED events for a given root commission ID.
+ * Returns 0 if the file is unreadable.
+ */
+function countReviewedCycles(rootId) {
+  try {
+    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    let count = 0;
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.event === 'REVIEWED' && (entry.id === String(rootId) || entry.root_commission_id === String(rootId))) {
+          count++;
+        }
+      } catch (_) {}
+    }
+    return count;
+  } catch (_) {
+    return 0;
+  }
+}
+
+/**
+ * hasReviewEvent(id)
+ *
+ * Returns true if register.jsonl contains a REVIEWED, ACCEPTED, or STUCK event
+ * for this commission ID — meaning it has already been evaluated.
+ */
+function hasReviewEvent(id) {
+  try {
+    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.id === String(id) && ['REVIEWED', 'ACCEPTED', 'STUCK'].includes(entry.event)) {
+          return true;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return false;
+}
+
+/**
+ * invokeEvaluator(id)
+ *
+ * Reads the COMMISSION and EVALUATING files for the given commission ID,
+ * constructs an evaluator prompt, calls claude -p, parses the JSON verdict,
+ * and handles ACCEPTED / AMENDMENT_NEEDED / STUCK outcomes.
+ */
+function invokeEvaluator(id) {
+  const commissionPath  = path.join(QUEUE_DIR, `${id}-COMMISSION.md`);
+  const evaluatingPath  = path.join(QUEUE_DIR, `${id}-EVALUATING.md`);
+
+  // Read COMMISSION file (original ACs).
+  let commissionContent;
+  try {
+    commissionContent = fs.readFileSync(commissionPath, 'utf-8');
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'COMMISSION file not found — skipping evaluation', error: err.message });
+    // Rename back to DONE so the poll loop can try again later.
+    try { fs.renameSync(evaluatingPath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
+    processing = false;
+    heartbeatState.status = 'idle';
+    heartbeatState.current_commission = null;
+    heartbeatState.current_commission_goal = null;
+    heartbeatState.pickupTime = null;
+    writeHeartbeat();
+    return;
+  }
+
+  // Read EVALUATING file (O'Brien's DONE report).
+  let evaluatingContent;
+  try {
+    evaluatingContent = fs.readFileSync(evaluatingPath, 'utf-8');
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'EVALUATING file not found — skipping evaluation', error: err.message });
+    processing = false;
+    heartbeatState.status = 'idle';
+    heartbeatState.current_commission = null;
+    heartbeatState.current_commission_goal = null;
+    heartbeatState.pickupTime = null;
+    writeHeartbeat();
+    return;
+  }
+
+  // Extract branch name from O'Brien's DONE report frontmatter.
+  const doneMeta = parseFrontmatter(evaluatingContent) || {};
+  const branchName = doneMeta.branch || null;
+
+  // Determine root commission ID and amendment cycle.
+  const commissionMeta = parseFrontmatter(commissionContent) || {};
+  const rootId = commissionMeta.root_commission_id || id;
+  const cycle  = countReviewedCycles(rootId);
+
+  log('info', 'evaluator', { id, rootId, cycle, branchName, msg: 'Starting evaluation' });
+  print(`${B.tl}${B.sng.repeat(W - 1)}`);
+  print(`${B.vert}  ${SYM.right} Evaluator${SYM.sep}Commission ${id} (cycle ${cycle + 1} of 5)`);
+  print(`${B.vert}    Invoking Kira evaluator via claude -p`);
+  print(`${B.vert}`);
+
+  const prompt = [
+    'You are Kira, Delivery Coordinator for Liberation of Bajor.',
+    '',
+    'Your job: evaluate whether O\'Brien\'s DONE report satisfies ALL acceptance criteria in the original commission. Be specific. If even one AC is not met, the verdict is AMENDMENT_NEEDED.',
+    '',
+    '## ORIGINAL COMMISSION (contains the acceptance criteria):',
+    '',
+    commissionContent,
+    '',
+    '## O\'BRIEN\'S DONE REPORT:',
+    '',
+    evaluatingContent,
+    '',
+    `## AMENDMENT CYCLE: ${cycle} of 5`,
+    '',
+    `## BRANCH: ${branchName || '(unknown — read from DONE report above)'}`,
+    '',
+    'Respond with ONLY valid JSON, no other text:',
+    '{',
+    '  "verdict": "ACCEPTED" or "AMENDMENT_NEEDED",',
+    '  "reason": "One paragraph explaining your decision. Reference specific ACs.",',
+    '  "failed_criteria": ["list of specific ACs that were not met, empty if ACCEPTED"],',
+    '  "amendment_instructions": "If AMENDMENT_NEEDED: specific instructions for O\'Brien to fix each failed criterion. Reference file paths and expected changes. If ACCEPTED: empty string."',
+    '}',
+  ].join('\n');
+
+  const pickupTime = Date.now();
+
+  // Progress tick every 60s.
+  const tickInterval = setInterval(() => {
+    printProgressTick(Date.now() - pickupTime);
+  }, 60000);
+
+  const child = execFile(
+    config.claudeCommand,
+    config.claudeArgs,
+    {
+      cwd: PROJECT_DIR,
+      encoding: 'utf-8',
+      timeout: config.timeoutMs,
+      maxBuffer: 10 * 1024 * 1024,
+    },
+    (err, stdout, stderr) => {
+      clearInterval(tickInterval);
+      const durationMs = Date.now() - pickupTime;
+
+      let verdict = null;
+      let reason = '';
+      let failedCriteria = [];
+      let amendmentInstructions = '';
+
+      if (!err) {
+        // Parse the evaluator's JSON response from claude's JSON output wrapper.
+        try {
+          const claudeOutput = JSON.parse(stdout.trim());
+          // claude -p --output-format json wraps the response in a result field.
+          const rawText = claudeOutput.result || claudeOutput.content || stdout.trim();
+          // Extract JSON from the text (may be wrapped in markdown code fences).
+          const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            verdict = parsed.verdict;
+            reason = parsed.reason || '';
+            failedCriteria = parsed.failed_criteria || [];
+            amendmentInstructions = parsed.amendment_instructions || '';
+          }
+        } catch (parseErr) {
+          log('warn', 'evaluator', { id, msg: 'Failed to parse evaluator JSON response', error: parseErr.message, stdout: stdout.slice(0, 500) });
+        }
+      } else {
+        log('error', 'evaluator', { id, msg: 'claude -p evaluator failed', error: err.message, durationMs });
+      }
+
+      if (!verdict || !['ACCEPTED', 'AMENDMENT_NEEDED'].includes(verdict)) {
+        // Fallback: rename EVALUATING back to DONE for re-evaluation.
+        log('warn', 'evaluator', { id, msg: 'No valid verdict — requeueing for re-evaluation', verdict });
+        try { fs.renameSync(evaluatingPath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
+        print(`${B.vert}    ${C.yellow}${SYM.back}${C.reset} Evaluation failed${SYM.sep}re-queued for retry`);
+        print(`${B.bl}${B.sng.repeat(W - 1)}`);
+        print('');
+        processing = false;
+        heartbeatState.status = 'idle';
+        heartbeatState.current_commission = null;
+        heartbeatState.current_commission_goal = null;
+        heartbeatState.pickupTime = null;
+        heartbeatState.processed_total += 1;
+        writeHeartbeat();
+        return;
+      }
+
+      // Determine if STUCK: cycle >= 5 and amendment needed.
+      const isStuck = verdict === 'AMENDMENT_NEEDED' && cycle >= 5;
+      const finalVerdict = isStuck ? 'STUCK' : verdict;
+
+      if (finalVerdict === 'ACCEPTED') {
+        handleAccepted(id, reason, cycle + 1, branchName, evaluatingPath, durationMs);
+      } else if (finalVerdict === 'AMENDMENT_NEEDED') {
+        handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructions, cycle, branchName, evaluatingPath, commissionContent, durationMs);
+      } else {
+        handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs);
+      }
+
+      // Reset processing state.
+      processing = false;
+      heartbeatState.status = 'idle';
+      heartbeatState.current_commission = null;
+      heartbeatState.current_commission_goal = null;
+      heartbeatState.pickupTime = null;
+      heartbeatState.processed_total += 1;
+      writeHeartbeat();
+    }
+  );
+
+  child.stdin.write(prompt);
+  child.stdin.end();
+}
+
+/**
+ * handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationMs)
+ *
+ * ACCEPTED verdict: register event, rename EVALUATING → ACCEPTED, write merge PENDING.
+ */
+function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationMs) {
+  registerEvent(id, 'ACCEPTED', { reason, cycle });
+  log('info', 'evaluator', { id, verdict: 'ACCEPTED', cycle, durationMs });
+
+  const acceptedPath = path.join(QUEUE_DIR, `${id}-ACCEPTED.md`);
+  try {
+    fs.renameSync(evaluatingPath, acceptedPath);
+    log('info', 'state', { id, from: 'EVALUATING', to: 'ACCEPTED' });
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'Failed to rename EVALUATING to ACCEPTED', error: err.message });
+  }
+
+  // Write merge commission PENDING.
+  const nextId = nextCommissionId(QUEUE_DIR);
+  const mergeContent = [
+    '---',
+    `id: "${nextId}"`,
+    `title: "Merge ${branchName || `commission ${id} branch`} to main"`,
+    `goal: "Branch ${branchName || `from commission ${id}`} is merged to main and tests pass."`,
+    'from: kira',
+    'to: obrien',
+    'priority: normal',
+    `created: "${new Date().toISOString()}"`,
+    'references: null',
+    'timeout_min: null',
+    'type: merge',
+    `source_commission_id: "${id}"`,
+    `branch: "${branchName || ''}"`,
+    '---',
+    '',
+    `## Objective`,
+    '',
+    `Merge branch \`${branchName || '(see source_commission_id)'}\` to main.`,
+    '',
+    '## Tasks',
+    '',
+    '1. Check out the branch specified in the frontmatter.',
+    '2. Merge it to main (or create a PR merge commit).',
+    '3. Verify tests pass.',
+    '4. Write a DONE report confirming the merge and final commit hash.',
+    '',
+    '## Constraints',
+    '',
+    'Do not squash commits. Preserve branch history.',
+    '',
+    '## Success criteria',
+    '',
+    '1. Branch is merged to main.',
+    '2. DONE report includes final commit hash on main.',
+  ].join('\n');
+
+  const mergePendingPath = path.join(QUEUE_DIR, `${nextId}-PENDING.md`);
+  try {
+    fs.writeFileSync(mergePendingPath, mergeContent);
+    log('info', 'evaluator', { id, msg: `Wrote merge commission ${nextId}-PENDING.md`, nextId, branch: branchName });
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'Failed to write merge commission PENDING', error: err.message });
+  }
+
+  callReviewAPI(id, 'ACCEPTED', reason);
+
+  print(`${B.vert}    ${C.green}${SYM.check}${C.reset} ACCEPTED${SYM.sep}Merge commission ${nextId} queued`);
+  print(`${B.bl}${B.sng.repeat(W - 1)}`);
+  print('');
+}
+
+/**
+ * handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructions,
+ *                 cycle, branchName, evaluatingPath, commissionContent, durationMs)
+ *
+ * AMENDMENT_NEEDED verdict: register event, rename EVALUATING → REVIEWED, write amendment PENDING.
+ */
+function handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructions, cycle, branchName, evaluatingPath, commissionContent, durationMs) {
+  registerEvent(id, 'REVIEWED', { verdict: 'AMENDMENT_NEEDED', reason, failed_criteria: failedCriteria, cycle: cycle + 1, root_commission_id: rootId });
+  log('info', 'evaluator', { id, verdict: 'AMENDMENT_NEEDED', cycle: cycle + 1, rootId, durationMs });
+
+  const reviewedPath = path.join(QUEUE_DIR, `${id}-REVIEWED.md`);
+  try {
+    fs.renameSync(evaluatingPath, reviewedPath);
+    log('info', 'state', { id, from: 'EVALUATING', to: 'REVIEWED' });
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'Failed to rename EVALUATING to REVIEWED', error: err.message });
+  }
+
+  // Write amendment commission PENDING.
+  const nextId = nextCommissionId(QUEUE_DIR);
+  const failedList = (failedCriteria || []).map((c, i) => `${i + 1}. ${c}`).join('\n');
+  const amendmentContent = [
+    '---',
+    `id: "${nextId}"`,
+    `title: "Amendment ${cycle + 1} — fix failed criteria for commission ${rootId}"`,
+    `goal: "All acceptance criteria from commission ${rootId} are met on branch ${branchName || '(original branch)'}."`,
+    'from: kira',
+    'to: obrien',
+    'priority: normal',
+    `created: "${new Date().toISOString()}"`,
+    `references: "${id}"`,
+    'timeout_min: null',
+    'type: amendment',
+    `root_commission_id: "${rootId}"`,
+    `amendment_cycle: ${cycle + 1}`,
+    `branch: "${branchName || ''}"`,
+    '---',
+    '',
+    '## Objective',
+    '',
+    `This is an amendment to commission ${rootId} (cycle ${cycle + 1} of 5). Continue working on branch \`${branchName || '(see frontmatter branch field)'}\`. Do NOT create a new branch.`,
+    '',
+    '## Failed criteria',
+    '',
+    failedList || '(see amendment instructions below)',
+    '',
+    '## Amendment instructions',
+    '',
+    amendmentInstructions || '(see failed criteria above)',
+    '',
+    '## Original acceptance criteria (from commission ' + rootId + ')',
+    '',
+    commissionContent,
+    '',
+    '## Constraints',
+    '',
+    `Stay on branch \`${branchName || '(see frontmatter)'}\`. Do not create a new branch.`,
+    '',
+    '## Success criteria',
+    '',
+    '1. All failed criteria listed above are resolved.',
+    '2. All original acceptance criteria from commission ' + rootId + ' are met.',
+    '3. DONE report includes branch name in frontmatter.',
+  ].join('\n');
+
+  const amendmentPendingPath = path.join(QUEUE_DIR, `${nextId}-PENDING.md`);
+  try {
+    fs.writeFileSync(amendmentPendingPath, amendmentContent);
+    log('info', 'evaluator', { id, msg: `Wrote amendment commission ${nextId}-PENDING.md`, nextId, cycle: cycle + 1, rootId });
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'Failed to write amendment commission PENDING', error: err.message });
+  }
+
+  callReviewAPI(id, 'AMENDMENT_NEEDED', reason);
+
+  print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} AMENDMENT_NEEDED (cycle ${cycle + 1})${SYM.sep}Amendment ${nextId} queued`);
+  print(`${B.bl}${B.sng.repeat(W - 1)}`);
+  print('');
+}
+
+/**
+ * handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs)
+ *
+ * STUCK verdict: register event, rename EVALUATING → STUCK, no new PENDING.
+ */
+function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) {
+  registerEvent(id, 'STUCK', { reason: 'amendment cap reached', cycle, branch: branchName });
+  log('warn', 'evaluator', { id, verdict: 'STUCK', cycle, durationMs });
+
+  const stuckPath = path.join(QUEUE_DIR, `${id}-STUCK.md`);
+  try {
+    fs.renameSync(evaluatingPath, stuckPath);
+    log('info', 'state', { id, from: 'EVALUATING', to: 'STUCK' });
+  } catch (err) {
+    log('warn', 'evaluator', { id, msg: 'Failed to rename EVALUATING to STUCK', error: err.message });
+  }
+
+  callReviewAPI(id, 'STUCK', reason);
+
+  print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} STUCK${SYM.sep}Commission ${id} hit amendment cap (${cycle} cycles). Manual intervention required.`);
+  print(`${B.bl}${B.sng.repeat(W - 1)}`);
+  print('');
+}
+
+// ---------------------------------------------------------------------------
 // ERROR file (written by watcher on invocation failure or invalid commission)
 // ---------------------------------------------------------------------------
 
@@ -765,6 +1195,56 @@ function poll() {
     .sort(); // lexicographic = numeric FIFO given zero-padded IDs
 
   if (pendingFiles.length === 0) {
+    // Priority 2: DONE files needing evaluation.
+    const doneFiles = files.filter(f => f.endsWith('-DONE.md')).sort();
+    for (const doneFile of doneFiles) {
+      const doneId = doneFile.replace('-DONE.md', '');
+      const donePath = path.join(QUEUE_DIR, doneFile);
+      const commissionPath = path.join(QUEUE_DIR, `${doneId}-COMMISSION.md`);
+
+      // Skip if COMMISSION file not present (O'Brien may still be running).
+      if (!fs.existsSync(commissionPath)) continue;
+
+      // Check if merge commission — auto-accept without claude -p.
+      let commissionMeta = {};
+      try {
+        commissionMeta = parseFrontmatter(fs.readFileSync(commissionPath, 'utf-8')) || {};
+      } catch (_) {}
+
+      if (commissionMeta.type === 'merge') {
+        log('info', 'evaluator', { id: doneId, msg: 'Merge commission auto-accepted' });
+        const acceptedPath = path.join(QUEUE_DIR, `${doneId}-ACCEPTED.md`);
+        try { fs.renameSync(donePath, acceptedPath); } catch (_) {}
+        registerEvent(doneId, 'ACCEPTED', { reason: 'auto-accepted merge', cycle: 0 });
+        callReviewAPI(doneId, 'ACCEPTED', 'auto-accepted merge');
+        print(`  ${C.green}${SYM.check}${C.reset} Commission ${doneId}${SYM.dash}Merge auto-accepted`);
+        continue;
+      }
+
+      // Skip if already reviewed.
+      if (hasReviewEvent(doneId)) continue;
+
+      // Rename DONE → EVALUATING to claim it.
+      const evaluatingPath = path.join(QUEUE_DIR, `${doneId}-EVALUATING.md`);
+      try {
+        fs.renameSync(donePath, evaluatingPath);
+        log('info', 'state', { id: doneId, from: 'DONE', to: 'EVALUATING' });
+      } catch (err) {
+        log('warn', 'evaluator', { id: doneId, msg: 'Failed to rename DONE to EVALUATING', error: err.message });
+        continue;
+      }
+
+      processing = true;
+      heartbeatState.status = 'evaluating';
+      heartbeatState.current_commission = doneId;
+      heartbeatState.current_commission_goal = commissionMeta.goal || null;
+      heartbeatState.pickupTime = Date.now();
+      writeHeartbeat();
+
+      invokeEvaluator(doneId);
+      return;
+    }
+
     idlePrintCounter += 1;
     if (idlePrintCounter >= 12) {
       idlePrintCounter = 0;
@@ -896,6 +1376,21 @@ function crashRecovery() {
   } catch (err) {
     log('warn', 'startup_recovery', { msg: 'Cannot read queue dir for crash recovery', error: err.message });
     return actions;
+  }
+
+  // Recover orphaned EVALUATING files → rename back to DONE for re-evaluation.
+  const evaluatingFiles = files.filter(f => f.endsWith('-EVALUATING.md'));
+  for (const file of evaluatingFiles) {
+    const id              = file.replace('-EVALUATING.md', '');
+    const evaluatingPath  = path.join(QUEUE_DIR, file);
+    const donePath        = path.join(QUEUE_DIR, `${id}-DONE.md`);
+    try {
+      fs.renameSync(evaluatingPath, donePath);
+      log('info', 'startup_recovery', { id, msg: 'Orphaned EVALUATING renamed to DONE (re-queued for evaluation)', action: 're-queued-eval' });
+      actions.push({ id, type: 'requeued_eval' });
+    } catch (err) {
+      log('warn', 'startup_recovery', { id, msg: 'Failed to rename orphaned EVALUATING to DONE', error: err.message });
+    }
   }
 
   const inProgressFiles = files.filter(f => f.endsWith('-IN_PROGRESS.md'));

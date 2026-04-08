@@ -4,13 +4,15 @@ const http = require('http');
 const fs   = require('fs');
 const path = require('path');
 
-const PORT       = process.env.DASHBOARD_PORT ? parseInt(process.env.DASHBOARD_PORT, 10) : 4747;
-const HOST       = process.env.DASHBOARD_HOST ?? '0.0.0.0';
-const REPO_ROOT  = path.resolve(__dirname, '..');
-const QUEUE_DIR  = path.join(REPO_ROOT, 'bridge', 'queue');
-const HEARTBEAT  = path.join(REPO_ROOT, 'bridge', 'heartbeat.json');
-const REGISTER   = path.join(REPO_ROOT, 'bridge', 'register.jsonl');
-const DASHBOARD  = path.join(__dirname, 'lcars-dashboard.html');
+const PORT         = process.env.DASHBOARD_PORT ? parseInt(process.env.DASHBOARD_PORT, 10) : 4747;
+const HOST         = process.env.DASHBOARD_HOST ?? '0.0.0.0';
+const REPO_ROOT    = path.resolve(__dirname, '..');
+const QUEUE_DIR    = path.join(REPO_ROOT, 'bridge', 'queue');
+const HEARTBEAT    = path.join(REPO_ROOT, 'bridge', 'heartbeat.json');
+const REGISTER     = path.join(REPO_ROOT, 'bridge', 'register.jsonl');
+const DASHBOARD    = path.join(__dirname, 'lcars-dashboard.html');
+
+const CORS_ORIGIN  = 'https://dax-dashboard.lovable.app';
 
 // ── Frontmatter parser ───────────────────────────────────────────────────────
 // Extracts key:value pairs from the YAML block between the first two `---` lines.
@@ -192,30 +194,9 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (pathname === '/api/bridge') {
-    const corsHeaders = {
-      'Access-Control-Allow-Origin':  'https://dax-dashboard.lovable.app',
-      'Access-Control-Allow-Methods': 'GET',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, corsHeaders);
-      res.end();
-      return;
-    }
-
-    let data;
-    try { data = buildBridgeData(); }
-    catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); return; }
-    res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
-    res.end(JSON.stringify(data));
-    return;
-  }
-
   if (pathname === '/api/bridge/review') {
     const corsHeaders = {
-      'Access-Control-Allow-Origin':  '*',
+      'Access-Control-Allow-Origin':  CORS_ORIGIN,
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     };
@@ -243,30 +224,54 @@ const server = http.createServer((req, res) => {
         return;
       }
 
-      const { id, verdict, notes } = payload;
+      const { id, verdict, reason } = payload;
+      const VALID_VERDICTS = ['ACCEPTED', 'AMENDMENT_NEEDED', 'STUCK'];
       if (!id || !verdict) {
         res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
-        res.end(JSON.stringify({ error: 'id and verdict are required' }));
+        res.end(JSON.stringify({ error: 'Missing required fields: id, verdict' }));
         return;
       }
-      const validVerdicts = ['ACCEPTED', 'AMENDMENT_REQUIRED'];
-      if (!validVerdicts.includes(verdict)) {
+      if (!VALID_VERDICTS.includes(verdict)) {
         res.writeHead(400, { 'Content-Type': 'application/json', ...corsHeaders });
-        res.end(JSON.stringify({ error: `verdict must be one of: ${validVerdicts.join(', ')}` }));
+        res.end(JSON.stringify({ error: `Invalid verdict. Must be one of: ${VALID_VERDICTS.join(', ')}` }));
         return;
       }
 
       try {
-        writeRegisterEvent({ id, event: 'REVIEWED', verdict, ...(notes != null ? { notes } : {}) });
+        writeRegisterEvent(Object.assign(
+          { id: String(id), event: 'REVIEW_RECEIVED', verdict },
+          reason ? { reason } : {}
+        ));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json', ...corsHeaders });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: 'Failed to write register entry' }));
         return;
       }
 
       res.writeHead(201, { 'Content-Type': 'application/json', ...corsHeaders });
       res.end(JSON.stringify({ ok: true }));
     });
+    return;
+  }
+
+  if (pathname === '/api/bridge') {
+    const corsHeaders = {
+      'Access-Control-Allow-Origin':  CORS_ORIGIN,
+      'Access-Control-Allow-Methods': 'GET',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, corsHeaders);
+      res.end();
+      return;
+    }
+
+    let data;
+    try { data = buildBridgeData(); }
+    catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: String(err) })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
+    res.end(JSON.stringify(data));
     return;
   }
 
