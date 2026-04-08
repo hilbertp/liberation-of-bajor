@@ -10,7 +10,7 @@ const { execFile } = require('child_process');
 
 const DEFAULTS = {
   pollIntervalMs: 5000,
-  timeoutMs: 900000,
+  inactivityTimeoutMs: 300000, // ms of no stdout/stderr activity before killing the child
   heartbeatIntervalMs: 60000,
   queueDir: 'queue',
   logFile: 'bridge.log',
@@ -30,10 +30,13 @@ function loadConfig() {
     // Config file absent or unreadable — proceed with defaults.
     // This is intentional: the watcher must work with zero configuration.
   }
-  return Object.assign({}, DEFAULTS, fileConfig);
+  return {
+    config: Object.assign({}, DEFAULTS, fileConfig),
+    hasDeprecatedTimeoutMs: 'timeoutMs' in fileConfig,
+  };
 }
 
-const config = loadConfig();
+const { config, hasDeprecatedTimeoutMs } = loadConfig();
 
 // ---------------------------------------------------------------------------
 // Resolved paths
@@ -47,6 +50,20 @@ const REGISTER_FILE  = path.resolve(__dirname, 'register.jsonl');
 
 // Ensure queue directory exists.
 fs.mkdirSync(QUEUE_DIR, { recursive: true });
+
+// Deprecation check: timeoutMs was the old wall-clock timeout. It is now ignored.
+// Log once at startup if found in the config file.
+if (hasDeprecatedTimeoutMs) {
+  const line = JSON.stringify({ ts: new Date().toISOString(), level: 'warn', event: 'deprecation', msg: 'Config key "timeoutMs" is deprecated and ignored. Use "inactivityTimeoutMs" instead.' });
+  try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Activity tracking — updated by invokeOBrien when child process produces output.
+// Exposed at module level so writeHeartbeat can include last_activity_ts.
+// ---------------------------------------------------------------------------
+
+let currentLastActivityTs = null; // null when idle, Date object when processing
 
 // ---------------------------------------------------------------------------
 // Terminal presentation
@@ -221,14 +238,14 @@ function getQueueSnapshot(queueDir) {
  * and queue snapshot. Called once on launch after crashRecovery() runs.
  */
 function printStartupBlock(recoveryActions) {
-  const ts         = timestampNow();
-  const pollSec    = Math.round(config.pollIntervalMs / 1000);
-  const timeoutMin = Math.round(config.timeoutMs / 60000);
+  const ts              = timestampNow();
+  const pollSec         = Math.round(config.pollIntervalMs / 1000);
+  const inactivityMin   = Math.round(config.inactivityTimeoutMs / 60000);
 
   print('');
   print(hLine(B.dbl));
   print(`  Liberation of Bajor${SYM.sep}Watcher`);
-  print(`  Started: ${ts}${SYM.sep}Polling every ${pollSec}s${SYM.sep}Timeout: ${timeoutMin}min`);
+  print(`  Started: ${ts}${SYM.sep}Polling every ${pollSec}s${SYM.sep}Inactivity kill: ${inactivityMin}min`);
   print(hLine(B.dbl));
 
   if (recoveryActions.length > 0) {
@@ -415,6 +432,7 @@ function writeHeartbeat() {
     current_commission_title: heartbeatState.current_commission_title,
     current_commission_goal: heartbeatState.current_commission_goal,
     commission_elapsed_seconds: elapsedSeconds,
+    last_activity_ts: currentLastActivityTs ? currentLastActivityTs.toISOString() : null,
     processed_total: heartbeatState.processed_total,
     queue,
   };
@@ -446,10 +464,18 @@ let idlePrintCounter = 0;
  * Always cleans up the IN_PROGRESS file on completion (existence-checked to
  * avoid ENOENT when O'Brien's crash recovery already handled it).
  */
-function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title, goal) {
+function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal) {
   const prompt = commissionContent + '\n\nWrite your report to: ' + donePath;
 
   const pickupTime = Date.now();
+
+  // Activity tracking: updated whenever the child writes to stdout or stderr.
+  // killedByInactivity is set to true before we manually kill so the callback
+  // can distinguish our inactivity kill from an external SIGTERM.
+  let lastActivityTs = Date.now();
+  let killedByInactivity = false;
+  currentLastActivityTs = new Date();
+
   heartbeatState.status = 'processing';
   heartbeatState.current_commission = id;
   heartbeatState.current_commission_title = title || null;
@@ -463,7 +489,7 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
     command: config.claudeCommand,
     args: config.claudeArgs,
     cwd: PROJECT_DIR,
-    timeoutMs: effectiveTimeoutMs,
+    inactivityTimeoutMs: effectiveInactivityMs,
   });
 
   // Progress tick: every 60s while O'Brien is running — stdout only, not bridge.log.
@@ -477,14 +503,17 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
     {
       cwd: PROJECT_DIR,
       encoding: 'utf-8',
-      timeout: effectiveTimeoutMs,
+      // No timeout here — we handle killing via inactivity check below.
       maxBuffer: 10 * 1024 * 1024, // 10 MB stdout buffer
     },
     (err, stdout, stderr) => {
       clearInterval(tickInterval);
+      clearInterval(inactivityCheck);
+
+      // Reset module-level activity state.
+      currentLastActivityTs = null;
 
       const durationMs = Date.now() - pickupTime;
-      const isTimeout  = err && err.killed && err.signal === 'SIGTERM';
 
       // Extract token usage from JSON output (Task 2).
       // Falls back gracefully to nulls if output is not parseable JSON.
@@ -514,20 +543,41 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
           recordSessionResult(false, tokensIn, tokensOut, costUsd);
         }
       } else {
-        // Failure path: distinguish timeout vs non-zero exit.
-        const reason = isTimeout ? 'timeout' : 'crash';
-        log('error', isTimeout ? 'timeout' : 'error', {
-          id,
-          msg: isTimeout ? 'Commission timed out' : 'claude -p failed',
-          reason,
-          exitCode: err.code,
-          signal: err.signal || null,
-          durationMs,
-        });
-        writeErrorFile(errorPath, id, reason, err, stdout, stderr);
+        // Failure path: distinguish inactivity kill vs other signals vs crash.
+        let reason;
+        let reasonDisplay;
+        let extra = null;
+
+        if (killedByInactivity) {
+          const lastActivitySecondsAgo = Math.floor((Date.now() - lastActivityTs) / 1000);
+          const inactivityLimitMinutes = Math.round(effectiveInactivityMs / 60000);
+          reason = 'inactivity_timeout';
+          reasonDisplay = `Inactivity timeout (${inactivityLimitMinutes}min)`;
+          extra = { lastActivitySecondsAgo, inactivityLimitMinutes };
+          log('error', 'inactivity_timeout', {
+            id,
+            msg: 'Commission killed due to inactivity',
+            reason,
+            lastActivitySecondsAgo,
+            inactivityLimitMinutes,
+            durationMs,
+          });
+        } else {
+          reason = (err.killed && err.signal === 'SIGTERM') ? 'timeout' : 'crash';
+          reasonDisplay = reason === 'timeout' ? 'Timed out' : 'Process failed';
+          log('error', reason === 'timeout' ? 'timeout' : 'error', {
+            id,
+            msg: reason === 'timeout' ? 'Commission timed out' : 'claude -p failed',
+            reason,
+            exitCode: err.code,
+            signal: err.signal || null,
+            durationMs,
+          });
+        }
+
+        writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
         registerEvent(id, 'ERROR', { reason, exitCode: err.code, durationMs });
-        const reasonDisplay = isTimeout ? 'Timed out' : 'Process failed';
         closeCommissionBlock(false, durationMs, tokensIn, tokensOut, costUsd, reasonDisplay);
         recordSessionResult(false, tokensIn, tokensOut, costUsd);
       }
@@ -560,6 +610,34 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
       writeHeartbeat();
     }
   );
+
+  // Activity listeners: update lastActivityTs on any stdout/stderr output.
+  // These run in addition to execFile's internal buffering — no conflict.
+  child.stdout.on('data', () => {
+    lastActivityTs = Date.now();
+    currentLastActivityTs = new Date();
+  });
+  child.stderr.on('data', () => {
+    lastActivityTs = Date.now();
+    currentLastActivityTs = new Date();
+  });
+
+  // Inactivity check: every 30s, kill the child if no output for effectiveInactivityMs.
+  const inactivityCheck = setInterval(() => {
+    const silentMs = Date.now() - lastActivityTs;
+    if (silentMs > effectiveInactivityMs) {
+      const lastActivitySecondsAgo = Math.floor(silentMs / 1000);
+      const inactivityLimitMinutes = Math.round(effectiveInactivityMs / 60000);
+      log('warn', 'inactivity_timeout', {
+        id,
+        msg: `No output for ${lastActivitySecondsAgo}s — killing child process`,
+        lastActivitySecondsAgo,
+        inactivityLimitMinutes,
+      });
+      killedByInactivity = true;
+      child.kill('SIGTERM');
+    }
+  }, 30000);
 
   // Feed the prompt to claude via stdin, then close stdin to signal EOF.
   child.stdin.write(prompt);
@@ -608,6 +686,14 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
   if (reason === 'crash' && exitCode !== null) {
     frontmatter.push(`exit_code: ${exitCode}`);
   }
+  if (reason === 'inactivity_timeout') {
+    if (extra && extra.lastActivitySecondsAgo != null) {
+      frontmatter.push(`last_activity_seconds_ago: ${extra.lastActivitySecondsAgo}`);
+    }
+    if (extra && extra.inactivityLimitMinutes != null) {
+      frontmatter.push(`inactivity_limit_minutes: ${extra.inactivityLimitMinutes}`);
+    }
+  }
   frontmatter.push('---');
 
   const truncate = (s, n) => (s && s.length > n ? '…' + s.slice(-n) : s || '(empty)');
@@ -616,11 +702,13 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
 
   const detail = reason === 'timeout'
     ? 'The process was killed after exceeding the configured timeout.'
-    : reason === 'crash'
-      ? `The process exited with a non-zero status (exit code ${exitCode ?? 'unknown'}).`
-      : reason === 'no_report'
-        ? 'The process exited cleanly but wrote no DONE file.'
-        : `Commission frontmatter validation failed. Missing fields: ${(extra && extra.missingFields || []).join(', ')}.`;
+    : reason === 'inactivity_timeout'
+      ? `The process was killed after ${extra && extra.lastActivitySecondsAgo != null ? extra.lastActivitySecondsAgo : '?'}s of no stdout/stderr output (limit: ${extra && extra.inactivityLimitMinutes != null ? extra.inactivityLimitMinutes : '?'} min).`
+      : reason === 'crash'
+        ? `The process exited with a non-zero status (exit code ${exitCode ?? 'unknown'}).`
+        : reason === 'no_report'
+          ? 'The process exited cleanly but wrote no DONE file.'
+          : `Commission frontmatter validation failed. Missing fields: ${(extra && extra.missingFields || []).join(', ')}.`;
 
   const content = [
     ...frontmatter,
@@ -707,9 +795,10 @@ function poll() {
   const timeoutMin = meta && meta.timeout_min && meta.timeout_min !== 'null'
     ? parseInt(meta.timeout_min, 10)
     : null;
-  const effectiveTimeoutMs = timeoutMin != null && !isNaN(timeoutMin)
+  // timeout_min now means "minutes of inactivity before kill" (overrides inactivityTimeoutMs).
+  const effectiveInactivityMs = timeoutMin != null && !isNaN(timeoutMin)
     ? timeoutMin * 60 * 1000
-    : config.timeoutMs;
+    : config.inactivityTimeoutMs;
   const title = (meta && meta.title) || null;
   const goal  = (meta && meta.goal && meta.goal.trim()) || null;
 
@@ -780,7 +869,7 @@ function poll() {
   processing = true;
 
   // Invoke O'Brien asynchronously — event loop stays live.
-  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs, title, goal);
+  invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal);
 }
 
 // ---------------------------------------------------------------------------
@@ -912,7 +1001,7 @@ if (require.main === module) {
     msg: 'Watcher started',
     config: {
       pollIntervalMs: config.pollIntervalMs,
-      timeoutMs: config.timeoutMs,
+      inactivityTimeoutMs: config.inactivityTimeoutMs,
       heartbeatIntervalMs: config.heartbeatIntervalMs,
       queueDir: QUEUE_DIR,
       logFile: LOG_FILE,
