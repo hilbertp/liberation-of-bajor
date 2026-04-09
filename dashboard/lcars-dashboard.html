@@ -718,6 +718,182 @@
     animation: scanline 8s linear infinite;
     z-index: 999;
   }
+
+  /* ── STAGED PANEL ──────────────────────────────────── */
+  .staged-panel {
+    background: var(--panel-bg);
+    border: 1px solid #222;
+    border-radius: var(--border-sm);
+    padding: 14px 16px 12px;
+    margin-bottom: 8px;
+  }
+
+  .staged-panel .section-label {
+    margin-bottom: 10px;
+  }
+
+  .staged-empty {
+    color: var(--text-dim);
+    font-size: 13px;
+    letter-spacing: 1px;
+    padding: 12px 0;
+  }
+
+  .staged-card {
+    background: #0c0c0c;
+    border: 1px solid #2a2a2a;
+    border-left: 3px solid var(--lcars-amber);
+    border-radius: 0 var(--border-sm) var(--border-sm) 0;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+  }
+
+  .staged-card-header {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--lcars-peach);
+    margin-bottom: 6px;
+  }
+
+  .staged-card-header .staged-id {
+    color: var(--lcars-amber);
+    margin-right: 10px;
+  }
+
+  .staged-card-summary {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 12px;
+    font-family: 'Antonio', sans-serif;
+    letter-spacing: 0.5px;
+  }
+
+  .staged-card-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .staged-btn {
+    border: none;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-family: 'Antonio', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+
+  .staged-btn:hover { opacity: 0.8; }
+
+  .staged-btn-commission {
+    background: var(--lcars-green);
+    color: #000;
+  }
+
+  .staged-btn-amend {
+    background: var(--lcars-amber);
+    color: #000;
+  }
+
+  .staged-btn-reject {
+    background: var(--lcars-red);
+    color: #000;
+  }
+
+  .staged-btn-cancel {
+    background: #333;
+    color: var(--text);
+  }
+
+  .staged-btn-confirm-reject {
+    background: var(--lcars-red);
+    color: #000;
+  }
+
+  .staged-inline-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .staged-inline-form input[type="text"] {
+    background: #111;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .staged-inline-form input[type="text"]:focus {
+    outline: none;
+    border-color: var(--lcars-amber);
+  }
+
+  .staged-amendment-note {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #1a1000;
+    border: 1px solid #443300;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--lcars-amber);
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  .staged-amendment-note .note-label {
+    font-family: 'Antonio', sans-serif;
+    letter-spacing: 2px;
+    font-size: 9px;
+    color: var(--lcars-dark);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+
+  .staged-details-toggle {
+    background: none;
+    border: none;
+    color: var(--lcars-lavender);
+    font-family: 'Antonio', sans-serif;
+    font-size: 11px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    padding: 4px 0;
+    margin-top: 8px;
+    text-transform: uppercase;
+  }
+
+  .staged-details-toggle:hover { color: var(--text); }
+
+  .staged-details-body {
+    display: none;
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #060606;
+    border: 1px solid #1a1a1a;
+    border-radius: 4px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .staged-details-body.open { display: block; }
 </style>
 </head>
 <body>
@@ -755,6 +931,14 @@
 
   <div class="pipeline-stages" id="pipeline-stages">
     <!-- Rendered by JS -->
+  </div>
+</div>
+
+<!-- ══ STAGED COMMISSIONS PANEL ══════════════════════════════════════════ -->
+<div class="staged-panel" id="staged-panel">
+  <div class="section-label">Commissions Awaiting Your Review</div>
+  <div id="staged-cards">
+    <div class="staged-empty">No commissions awaiting review.</div>
   </div>
 </div>
 
@@ -1285,6 +1469,132 @@
   startElapsedTick();
   fetchBridge();
   setInterval(fetchBridge, 5000);
+
+  // ── Staged commissions panel ────────────────────────────────────────────────
+  function renderStagedCards(items) {
+    const container = document.getElementById('staged-cards');
+    if (!items || items.length === 0) {
+      container.innerHTML = '<div class="staged-empty">No commissions awaiting review.</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(item => {
+      const summary = escHtml(item.summary || item.goal || '');
+      const isAmendment = item.status === 'NEEDS_AMENDMENT';
+
+      let actionsHtml;
+      if (isAmendment) {
+        actionsHtml = `
+          <div class="staged-amendment-note">
+            <div class="note-label">Awaiting Kira's revision</div>
+            ${escHtml(item.amendment_note || '')}
+          </div>`;
+      } else {
+        actionsHtml = `
+          <div class="staged-card-actions" id="staged-actions-${escHtml(item.id)}">
+            <button class="staged-btn staged-btn-commission" onclick="stagedCommission('${escHtml(item.id)}')">Commission</button>
+            <button class="staged-btn staged-btn-amend" onclick="stagedShowAmend('${escHtml(item.id)}')">Amend</button>
+            <button class="staged-btn staged-btn-reject" onclick="stagedShowReject('${escHtml(item.id)}')">Reject</button>
+          </div>`;
+      }
+
+      return `
+        <div class="staged-card" id="staged-card-${escHtml(item.id)}">
+          <div class="staged-card-header">
+            <span class="staged-id">#${escHtml(item.id)}</span>${escHtml(item.title || '')}
+          </div>
+          <div class="staged-card-summary">${summary}</div>
+          ${actionsHtml}
+          <button class="staged-details-toggle" onclick="stagedToggleDetails('${escHtml(item.id)}')">&#9656; Details</button>
+          <div class="staged-details-body" id="staged-details-${escHtml(item.id)}">${escHtml(item.body || '')}</div>
+        </div>`;
+    }).join('');
+  }
+
+  function stagedToggleDetails(id) {
+    const el = document.getElementById('staged-details-' + id);
+    if (el) el.classList.toggle('open');
+  }
+
+  async function stagedCommission(id) {
+    try {
+      const res = await fetch('/api/bridge/staged/' + id + '/commission', { method: 'POST' });
+      if (res.ok) {
+        const card = document.getElementById('staged-card-' + id);
+        if (card) card.remove();
+        // Check if no cards left
+        const container = document.getElementById('staged-cards');
+        if (!container.querySelector('.staged-card')) {
+          container.innerHTML = '<div class="staged-empty">No commissions awaiting review.</div>';
+        }
+        fetchBridge(); // refresh queue stats
+      }
+    } catch (_) {}
+  }
+
+  function stagedShowAmend(id) {
+    const actions = document.getElementById('staged-actions-' + id);
+    if (!actions) return;
+    actions.innerHTML = `
+      <div class="staged-inline-form">
+        <input type="text" id="staged-amend-input-${id}" placeholder="What should change?">
+        <button class="staged-btn staged-btn-amend" onclick="stagedSubmitAmend('${id}')">Submit</button>
+        <button class="staged-btn staged-btn-cancel" onclick="fetchStaged()">Cancel</button>
+      </div>`;
+    const input = document.getElementById('staged-amend-input-' + id);
+    if (input) input.focus();
+  }
+
+  async function stagedSubmitAmend(id) {
+    const input = document.getElementById('staged-amend-input-' + id);
+    const note = input ? input.value.trim() : '';
+    if (!note) return;
+    try {
+      const res = await fetch('/api/bridge/staged/' + id + '/amend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note }),
+      });
+      if (res.ok) fetchStaged();
+    } catch (_) {}
+  }
+
+  function stagedShowReject(id) {
+    const actions = document.getElementById('staged-actions-' + id);
+    if (!actions) return;
+    actions.innerHTML = `
+      <div class="staged-inline-form">
+        <span style="color:var(--lcars-red);font-size:12px;letter-spacing:1px">Reject this commission?</span>
+        <button class="staged-btn staged-btn-confirm-reject" onclick="stagedConfirmReject('${id}')">Confirm</button>
+        <button class="staged-btn staged-btn-cancel" onclick="fetchStaged()">Cancel</button>
+      </div>`;
+  }
+
+  async function stagedConfirmReject(id) {
+    try {
+      const res = await fetch('/api/bridge/staged/' + id + '/reject', { method: 'POST' });
+      if (res.ok) {
+        const card = document.getElementById('staged-card-' + id);
+        if (card) card.remove();
+        const container = document.getElementById('staged-cards');
+        if (!container.querySelector('.staged-card')) {
+          container.innerHTML = '<div class="staged-empty">No commissions awaiting review.</div>';
+        }
+      }
+    } catch (_) {}
+  }
+
+  async function fetchStaged() {
+    try {
+      const res = await fetch('/api/bridge/staged');
+      if (!res.ok) return;
+      const items = await res.json();
+      renderStagedCards(items);
+    } catch (_) {}
+  }
+
+  fetchStaged();
+  setInterval(fetchStaged, 5000);
 </script>
 
 </body>

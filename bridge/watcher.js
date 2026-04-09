@@ -43,6 +43,7 @@ const { config, hasDeprecatedTimeoutMs } = loadConfig();
 // ---------------------------------------------------------------------------
 
 const QUEUE_DIR      = path.resolve(__dirname, config.queueDir);
+const STAGED_DIR     = path.resolve(__dirname, 'staged');
 const LOG_FILE       = path.resolve(__dirname, config.logFile);
 const HEARTBEAT_FILE = path.resolve(__dirname, config.heartbeatFile);
 const PROJECT_DIR    = path.resolve(__dirname, config.projectDir);
@@ -280,6 +281,17 @@ function printStartupBlock(recoveryActions) {
   } else {
     print(`    ${SYM.clip}${snapshot.waiting} waiting${SYM.sep}${snapshot.in_progress} in progress${SYM.sep}${snapshot.completed} completed${SYM.sep}${snapshot.failed} failed`);
   }
+
+  // Log staged commissions count
+  let stagedCount = 0;
+  try {
+    const stagedFiles = fs.readdirSync(STAGED_DIR).filter(f => f.endsWith('-STAGED.md') || f.endsWith('-NEEDS_AMENDMENT.md'));
+    stagedCount = stagedFiles.length;
+  } catch (_) {}
+  if (stagedCount > 0) {
+    print(`    ${C.yellow}ℹ${C.reset}  ${stagedCount} commission(s) awaiting your review in bridge/staged/`);
+  }
+
   print(hLine(B.sng));
   print('');
 }
