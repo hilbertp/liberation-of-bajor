@@ -112,6 +112,32 @@ function hLine(char) { return char.repeat(W); }
 
 function print(s) { process.stdout.write(s + '\n'); }
 
+function printUnmergedAlert(id, title, branchName) {
+  const msg = [
+    '',
+    '⚠️  UNMERGED BRANCH — Philipp action required',
+    `    Commission ${id}: ${title || '(unknown)'}`,
+    `    Branch: ${branchName}`,
+    '    Status: ACCEPTED but not merged to main',
+    `    Fix: git merge --no-ff ${branchName} && git push origin main`,
+    '',
+  ].join('\n');
+  print(msg);
+}
+
+function printMergeFailedAlert(id, title, branchName, errorMsg) {
+  const msg = [
+    '',
+    '⚠️  MERGE FAILED — Philipp action required',
+    `    Commission ${id}: ${title || '(unknown)'}`,
+    `    Branch: ${branchName}`,
+    `    Error: ${errorMsg}`,
+    `    Fix: git merge --no-ff ${branchName} && git push origin main`,
+    '',
+  ].join('\n');
+  print(msg);
+}
+
 // ---------------------------------------------------------------------------
 // Timestamps and formatting
 // ---------------------------------------------------------------------------
@@ -1021,6 +1047,7 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
     registerEvent(id, 'MERGE_FAILED', { branch: branchName, reason: result.error, commission_id: id });
     log('error', 'merge', { id, msg: `Merge failed for ${branchName}`, branch: branchName, reason: result.error });
     print(`${B.vert}    ${C.green}${SYM.check}${C.reset} ACCEPTED${SYM.sep}${C.red}${SYM.cross}${C.reset} Merge failed: ${result.error}`);
+    printMergeFailedAlert(id, title, branchName, result.error);
   }
 
   print(`${B.bl}${B.sng.repeat(W - 1)}`);
@@ -1504,6 +1531,7 @@ function crashRecovery() {
       registerEvent(id, 'MERGE_FAILED', { branch: branchName, reason: result.error, commission_id: id, recovery: true });
       log('warn', 'startup_recovery', { id, msg: `Recovery merge failed for ${branchName}`, branch: branchName, reason: result.error });
       actions.push({ id, type: 'recovery_merge_failed', branch: branchName, reason: result.error });
+      printUnmergedAlert(id, title, branchName);
     }
   }
 
