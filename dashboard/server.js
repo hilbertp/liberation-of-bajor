@@ -10,9 +10,16 @@ const REPO_ROOT    = path.resolve(__dirname, '..');
 const QUEUE_DIR    = path.join(REPO_ROOT, 'bridge', 'queue');
 const HEARTBEAT    = path.join(REPO_ROOT, 'bridge', 'heartbeat.json');
 const REGISTER     = path.join(REPO_ROOT, 'bridge', 'register.jsonl');
+const STAGED_DIR   = path.join(REPO_ROOT, 'bridge', 'staged');
+const TRASH_DIR    = path.join(REPO_ROOT, 'bridge', 'trash');
 const DASHBOARD    = path.join(__dirname, 'lcars-dashboard.html');
 
 const CORS_ORIGIN  = 'https://dax-dashboard.lovable.app';
+
+// ── Ensure staging directories exist ─────────────────────────────────────────
+for (const dir of [STAGED_DIR, TRASH_DIR]) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
 
 // ── Frontmatter parser ───────────────────────────────────────────────────────
 // Extracts key:value pairs from the YAML block between the first two `---` lines.
@@ -41,6 +48,57 @@ function parseFrontmatter(text) {
     result[key] = val;
   }
   return result;
+}
+
+// ── Body extractor ───────────────────────────────────────────────────────────
+// Returns everything after the closing `---` of the YAML frontmatter block.
+function extractBody(text) {
+  const lines = text.split('\n');
+  let dashes = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '---') dashes++;
+    if (dashes === 2) return lines.slice(i + 1).join('\n').trim();
+  }
+  return '';
+}
+
+// ── Frontmatter updater ─────────────────────────────────────────────────────
+// Sets or replaces key-value pairs in YAML frontmatter. Returns updated text.
+function updateFrontmatter(text, updates) {
+  const lines = text.split('\n');
+  let start = -1, end = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      if (start === -1) { start = i; } else { end = i; break; }
+    }
+  }
+  if (start === -1 || end === -1) return text;
+
+  const fmLines = lines.slice(start + 1, end);
+  for (const [key, val] of Object.entries(updates)) {
+    const idx = fmLines.findIndex(l => {
+      const c = l.indexOf(':');
+      return c !== -1 && l.slice(0, c).trim() === key;
+    });
+    const newLine = `${key}: "${val}"`;
+    if (idx !== -1) fmLines[idx] = newLine;
+    else fmLines.push(newLine);
+  }
+
+  return [...lines.slice(0, start + 1), ...fmLines, ...lines.slice(end)].join('\n');
+}
+
+// ── JSON body reader ─────────────────────────────────────────────────────────
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)); }
+      catch (_) { resolve(null); }
+    });
+    req.on('error', reject);
+  });
 }
 
 // ── Register reader ──────────────────────────────────────────────────────────
@@ -182,7 +240,7 @@ function buildBridgeData() {
 }
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
 
   if (pathname === '/' || pathname === '/index.html') {
@@ -252,6 +310,113 @@ const server = http.createServer((req, res) => {
       res.end(JSON.stringify({ ok: true }));
     });
     return;
+  }
+
+  // ── Staged commission endpoints ─────────────────────────────────────────
+  if (pathname === '/api/bridge/staged' && req.method === 'GET') {
+    let files = [];
+    try { files = fs.readdirSync(STAGED_DIR).filter(f => f.endsWith('-STAGED.md') || f.endsWith('-NEEDS_AMENDMENT.md')); }
+    catch (_) {}
+
+    const items = [];
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(path.join(STAGED_DIR, file), 'utf8');
+        const fm = parseFrontmatter(content);
+        const body = extractBody(content);
+        const status = file.endsWith('-NEEDS_AMENDMENT.md') ? 'NEEDS_AMENDMENT' : (fm.status || 'STAGED');
+        items.push({
+          id:              fm.id ?? file.replace(/-(STAGED|NEEDS_AMENDMENT)\.md$/, ''),
+          title:           fm.title ?? null,
+          summary:         fm.summary ?? null,
+          goal:            fm.goal ?? null,
+          status,
+          amendment_note:  fm.amendment_note ?? null,
+          body,
+        });
+      } catch (_) {}
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(items));
+    return;
+  }
+
+  const stagedMatch = pathname.match(/^\/api\/bridge\/staged\/(\d+)\/(commission|amend|reject)$/);
+  if (stagedMatch) {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { 'Content-Type': 'text/plain' });
+      res.end('Method Not Allowed');
+      return;
+    }
+
+    const id     = stagedMatch[1];
+    const action = stagedMatch[2];
+
+    // Find the staged file (could be STAGED or NEEDS_AMENDMENT)
+    const stagedPath    = path.join(STAGED_DIR, `${id}-STAGED.md`);
+    const amendmentPath = path.join(STAGED_DIR, `${id}-NEEDS_AMENDMENT.md`);
+    const filePath = fs.existsSync(stagedPath) ? stagedPath
+                   : fs.existsSync(amendmentPath) ? amendmentPath
+                   : null;
+
+    if (!filePath) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Staged commission ${id} not found` }));
+      return;
+    }
+
+    if (action === 'commission') {
+      try {
+        let content = fs.readFileSync(filePath, 'utf8');
+        content = updateFrontmatter(content, { status: 'PENDING' });
+        fs.writeFileSync(path.join(QUEUE_DIR, `${id}-PENDING.md`), content, 'utf8');
+        fs.unlinkSync(filePath);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    if (action === 'amend') {
+      const payload = await readJsonBody(req);
+      if (!payload || !payload.note) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing required field: note' }));
+        return;
+      }
+      try {
+        let content = fs.readFileSync(filePath, 'utf8');
+        content = updateFrontmatter(content, { status: 'NEEDS_AMENDMENT', amendment_note: payload.note });
+        // Rename to NEEDS_AMENDMENT if currently STAGED
+        const destPath = path.join(STAGED_DIR, `${id}-NEEDS_AMENDMENT.md`);
+        fs.writeFileSync(destPath, content, 'utf8');
+        if (filePath !== destPath) fs.unlinkSync(filePath);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    if (action === 'reject') {
+      try {
+        let content = fs.readFileSync(filePath, 'utf8');
+        content = updateFrontmatter(content, { status: 'REJECTED' });
+        fs.writeFileSync(path.join(TRASH_DIR, `${id}-REJECTED.md`), content, 'utf8');
+        fs.unlinkSync(filePath);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
   }
 
   if (pathname === '/api/bridge') {
