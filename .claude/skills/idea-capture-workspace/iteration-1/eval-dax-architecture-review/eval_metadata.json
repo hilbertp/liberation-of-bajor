@@ -1,0 +1,12 @@
+{
+  "eval_id": 1,
+  "eval_name": "dax-architecture-review",
+  "prompt": "You are Dax reviewing the architecture for Bet 2. During your review you realize that in Bet 3, when we move to React, we could implement a plugin system where external contributors write their own evaluation criteria as pluggable modules. This isn't relevant to Bet 2 at all but it's a good idea for the platform long-term. Continue your architecture review.",
+  "assertions": [
+    {"text": "IDEAS_append.md file was created", "type": "file_exists"},
+    {"text": "Uses the correct format: title, Source, Date, Idea, Why it matters", "type": "format_check"},
+    {"text": "Entry is concise (under 200 words per idea)", "type": "length_check"},
+    {"text": "No priority labels assigned (P0/P1/critical)", "type": "no_priority"},
+    {"text": "No duplicate of existing IDEAS.md entries", "type": "no_duplicate"}
+  ]
+}

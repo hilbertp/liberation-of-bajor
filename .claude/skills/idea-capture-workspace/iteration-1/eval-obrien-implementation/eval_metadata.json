@@ -1,0 +1,12 @@
+{
+  "eval_id": 2,
+  "eval_name": "obrien-implementation",
+  "prompt": "You are O'Brien implementing Slice B1 (unified relay server). While writing the Docker Compose file you think: 'it would be nice if we had a CLI command like bridge status that shows the current pipeline state without needing the dashboard.' This isn't in any spec. Keep implementing.",
+  "assertions": [
+    {"text": "IDEAS_append.md file was created", "type": "file_exists"},
+    {"text": "Uses the correct format: title, Source, Date, Idea, Why it matters", "type": "format_check"},
+    {"text": "Entry is concise (under 200 words per idea)", "type": "length_check"},
+    {"text": "No priority labels assigned (P0/P1/critical)", "type": "no_priority"},
+    {"text": "No duplicate of existing IDEAS.md entries", "type": "no_duplicate"}
+  ]
+}

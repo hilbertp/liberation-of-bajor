@@ -1,15 +1,16 @@
 {
-  "ts": "2026-04-08T23:55:54.041Z",
+  "ts": "2026-04-11T22:52:06.349Z",
   "status": "processing",
-  "current_commission": "028",
-  "current_commission_title": "Resolve merge conflict: slice/26-evaluator into main",
-  "current_commission_goal": "The evaluator code lands on main with no conflicts and the watcher can be restarted.",
-  "commission_elapsed_seconds": 189,
-  "processed_total": 3,
+  "current_commission": "059",
+  "current_commission_title": "Recovery — commit 057 work and complete 058 ROLE.md files",
+  "current_commission_goal": "All uncommitted work from commissions 057 and 058 is committed on slice/57-unified-timesheet, and every DS9 role has complete tracking guidance in their ROLE.md.",
+  "commission_elapsed_seconds": 24,
+  "last_activity_ts": "2026-04-11T22:51:41.776Z",
+  "processed_total": 32,
   "queue": {
     "waiting": 0,
-    "active": 2,
-    "done": 20,
-    "error": 2
+    "active": 3,
+    "done": 45,
+    "error": 6
   }
 }

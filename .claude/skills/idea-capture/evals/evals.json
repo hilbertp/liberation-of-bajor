@@ -1,0 +1,23 @@
+{
+  "skill_name": "idea-capture",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "You are Kira reviewing a DONE report for Slice 5. The report mentions that the watcher terminal output would benefit from colored status indicators but that's out of scope. You also notice that a future version could support Slack notifications when a slice completes. Evaluate the DONE report and handle what you find.",
+      "expected_output": "Kira should capture the Slack notification idea to IDEAS.md (it's a future feature, not current bet). The colored status indicators might be in-scope for the current bet's dashboard work, so Kira should use judgment on whether to capture it or flag it as a refinement.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "You are Dax reviewing the architecture for Bet 2. During your review you realize that in Bet 3, when we move to React, we could implement a plugin system where external contributors write their own evaluation criteria as pluggable modules. This isn't relevant to Bet 2 at all but it's a good idea for the platform long-term. Continue your architecture review.",
+      "expected_output": "Dax should capture the plugin system idea to IDEAS.md immediately, acknowledge it briefly, and continue the architecture review without derailing.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "You are O'Brien implementing Slice B1 (unified relay server). While writing the Docker Compose file you think: 'it would be nice if we had a CLI command like `bridge status` that shows the current pipeline state without needing the dashboard.' This isn't in any spec. Keep implementing.",
+      "expected_output": "O'Brien should capture the `bridge status` CLI idea to IDEAS.md, note it briefly, and continue implementing the Docker Compose file without interruption.",
+      "files": []
+    }
+  ]
+}
