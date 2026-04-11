@@ -76,13 +76,31 @@
   .header-status-dot.idle { background: #f59e0b; }
 
   /* ── ACTIVE COMMISSION ─────────────────────────────────── */
+  /* Active commission row — card left ~50%, black reserved space right */
+  .active-commission-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin-bottom: 24px;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
   .active-commission {
+    position: relative;
     background: #ffffff;
     border: 1px solid #e5e7eb;
     border-radius: 8px;
     padding: 20px 24px;
-    margin-bottom: 24px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    flex: 0 0 50%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .active-commission-aside {
+    flex: 0 0 50%;
+    min-width: 0;
   }
 
   .active-commission-header {
@@ -129,6 +147,33 @@
   .active-commission-idle {
     font-size: 14px;
     color: #9ca3af;
+  }
+
+  /* ── Active progress bar (Variant A) ───────────────────── */
+  .active-progress-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    overflow: hidden;
+    border-radius: 8px 8px 0 0;
+  }
+
+  .active-progress-bar::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -40%;
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, #6366f1, transparent);
+    animation: progress-slide 2s ease-in-out infinite;
+  }
+
+  @keyframes progress-slide {
+    0%   { left: -40%; }
+    100% { left: 100%; }
   }
 
   /* Pipeline stages */
@@ -614,7 +659,9 @@
   </div>
 
   <!-- ── ACTIVE COMMISSION ───────────────────────────────────────────── -->
+  <div class="active-commission-row">
   <div class="active-commission">
+    <div class="active-progress-bar" id="active-progress-bar" style="display:none"></div>
     <div class="active-commission-header">
       <div class="active-commission-info">
         <div id="mission-id-badge" class="active-commission-id" style="display:none"></div>
@@ -627,6 +674,8 @@
       <div id="mission-elapsed" class="active-commission-elapsed" style="display:none">00:00</div>
     </div>
     <div class="pipeline-stages" id="pipeline-stages"></div>
+  </div>
+  <div class="active-commission-aside" id="active-commission-aside"></div>
   </div>
 
   <!-- ── STAGED COMMISSIONS (preserved from 047) ─────────────────────── -->
@@ -860,6 +909,7 @@
     const elapsedEl  = document.getElementById('mission-elapsed');
     const titleEl    = document.getElementById('pipeline-mission-title');
     const stageEl    = document.getElementById('pipeline-mission-stage');
+    const progressBar = document.getElementById('active-progress-bar');
 
     if (activeStageKey && mission) {
       badgeEl.textContent  = `Commission ${escHtml(mission.id)}`;
@@ -869,6 +919,7 @@
       stageEl.textContent  = stageMeta ? stageMeta.label : activeStageKey;
       textEl.style.display = '';
       idleEl.style.display = 'none';
+      progressBar.style.display = (heartbeat.status === 'processing') ? '' : 'none';
 
       if (heartbeat.commission_elapsed_seconds != null) {
         // Derive start time once; don't re-anchor on subsequent polls
@@ -886,6 +937,7 @@
       textEl.style.display    = 'none';
       idleEl.style.display    = '';
       elapsedEl.style.display = 'none';
+      progressBar.style.display = 'none';
       commissionStartTime = null;
     }
   }
@@ -1142,8 +1194,9 @@
   }
 
   async function fetchStaged() {
-    // Don't re-render if an inline amend input is currently active — it would destroy the input mid-type
+    // Don't re-render if an inline amend input is active or a details panel is open — would destroy user interaction
     if (document.querySelector('.staged-inline-amend input:focus, .staged-inline-amend input')) return;
+    if (document.querySelector('.staged-details-body.open')) return;
     try {
       const res = await fetch('/api/bridge/staged');
       if (!res.ok) return;
