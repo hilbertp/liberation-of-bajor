@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dax — Wireframe v1</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-hover: #79c0ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --purple: #bc8cff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* NAV */
+  nav {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    padding: 16px 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(13,17,23,0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  nav .logo {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+  }
+  nav .logo span { color: var(--accent); }
+  nav a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 14px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  nav a:hover { color: var(--text); border-color: var(--text-muted); }
+
+  /* SECTIONS */
+  section {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 100px 24px;
+  }
+  section:first-of-type { padding-top: 160px; }
+
+  h1 {
+    font-size: clamp(36px, 5vw, 56px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1.5px;
+    margin-bottom: 24px;
+  }
+
+  h2 {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--accent);
+    margin-bottom: 16px;
+  }
+
+  h3 {
+    font-size: clamp(24px, 3vw, 36px);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.5px;
+    margin-bottom: 20px;
+  }
+
+  p {
+    font-size: 18px;
+    color: var(--text-muted);
+    max-width: 640px;
+    margin-bottom: 16px;
+  }
+  p.large {
+    font-size: 20px;
+    color: var(--text);
+    opacity: 0.85;
+  }
+
+  .cta-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 24px;
+    padding: 14px 28px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 16px;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 8px;
+    transition: background 0.2s;
+  }
+  .cta-primary:hover { background: var(--accent-hover); }
+  .cta-primary svg { width: 20px; height: 20px; }
+
+  /* DIVIDER */
+  .divider {
+    max-width: 860px;
+    margin: 0 auto;
+    border: none;
+    border-top: 1px solid var(--border);
+  }
+
+  /* PIPELINE */
+  .loop {
+    margin: 40px 0;
+  }
+  .loop-row {
+    display: flex;
+    align-items: stretch;
+  }
+  .loop-step {
+    flex: 1;
+    padding: 20px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-align: center;
+  }
+  .loop-step .step-num {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .loop-step .step-role {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .loop-step .step-action {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .loop-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    color: var(--accent);
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .loop-turn {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 0;
+    margin-right: calc(33.33% / 2);
+    color: var(--accent);
+    font-size: 18px;
+  }
+  .loop-return {
+    display: flex;
+    justify-content: flex-start;
+    padding: 8px 0;
+    margin-left: calc(33.33% / 2);
+    color: var(--accent);
+    font-size: 18px;
+  }
+  .pipeline-note {
+    margin-top: 16px;
+    font-size: 14px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  @media (max-width: 540px) {
+    .loop-row { flex-direction: column; }
+    .loop-arrow { transform: rotate(90deg); padding: 8px 0; }
+    .loop-turn, .loop-return { justify-content: center; }
+  }
+
+  /* ROSTER */
+  .roster {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    margin: 32px 0;
+  }
+  .role-card {
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    transition: border-color 0.2s;
+  }
+  .role-card:hover { border-color: var(--text-muted); }
+  .role-card .role-name {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .role-card .role-title {
+    font-size: 13px;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .role-card .role-desc {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .role-card.planned {
+    opacity: 0.5;
+    border-style: dashed;
+  }
+  .role-card.planned .role-title { color: var(--orange); }
+
+  .roster-footer {
+    margin-top: 20px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    color: var(--text-muted);
+  }
+  .roster-footer code {
+    background: rgba(88,166,255,0.1);
+    color: var(--accent);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+
+  /* GET INVOLVED */
+  .involve-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin: 32px 0;
+  }
+  @media (max-width: 640px) {
+    .involve-grid { grid-template-columns: 1fr; }
+  }
+  .involve-card {
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .involve-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .involve-card .involve-icon {
+    font-size: 24px;
+    margin-bottom: 12px;
+  }
+  .involve-card .involve-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .involve-card .involve-desc {
+    font-size: 14px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .involve-closer {
+    margin-top: 24px;
+    font-size: 16px;
+    color: var(--text-muted);
+  }
+  .involve-closer strong { color: var(--text); }
+
+  /* FOOTER */
+  footer {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+  footer a {
+    color: var(--text-muted);
+    text-decoration: none;
+    margin-left: 24px;
+    transition: color 0.2s;
+  }
+  footer a:hover { color: var(--text); }
+
+  /* WIREFRAME ANNOTATION LAYER */
+  .wire-note {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 4px 10px;
+    background: rgba(188,140,255,0.1);
+    border: 1px dashed var(--purple);
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--purple);
+    font-family: monospace;
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="logo"><span>Dax</span></div>
+  <a href="#" aria-label="View on GitHub">
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+    GitHub
+  </a>
+</nav>
+
+<!-- SECTION 1: HERO -->
+<section id="hero">
+  <h1>Stop being the glue<br>between your AI tools.</h1>
+  <p class="large">Dax is an open-source framework that orchestrates AI agents the way real software teams work — with roles, responsibilities, and memory. Not another copilot. A whole team.</p>
+  <a href="#" class="cta-primary">
+    <svg viewBox="0 0 16 16" width="20" height="20" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+    View on GitHub
+  </a>
+  <div class="wire-note">WIREFRAME: Single CTA. No secondary actions. GitHub is the only destination.</div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 2: THE PROBLEM -->
+<section id="problem">
+  <h2>The problem</h2>
+  <h3>The solo agent ceiling</h3>
+  <p>You've got Claude in one tab, Cursor in another, Copilot in your editor. Each one is impressive alone. But none of them coordinate.</p>
+  <p>Nobody's watching architecture while someone else ships features. Nobody remembers what was decided yesterday. Nobody pushes back on a bad approach.</p>
+  <p>You're the glue. You relay context, catch conflicts, maintain coherence across tools. It works — until it doesn't scale.</p>
+  <div class="wire-note">WIREFRAME: Plain text. No diagrams. The pain point should land through words alone.</div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 3: WHAT DAX IS -->
+<section id="what">
+  <h2>The framework</h2>
+  <h3>A team, not a tool</h3>
+  <p>Dax is an open-source framework for orchestrating AI agents as a structured software team. Each agent has a defined role — product manager, designer, architect, implementor, delivery coordinator — with its own context, decision rights, and persistent memory.</p>
+  <p>They communicate through a structured bridge, not ad-hoc prompting. You stay in the loop without being the loop.</p>
+  <div class="wire-note">WIREFRAME: One paragraph concept. Intentionally short — the details come in the next section.</div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 4: HOW IT WORKS -->
+<section id="how">
+  <h2>How it works</h2>
+  <h3>The delivery loop</h3>
+  <p>Here's what actually happens when Dax runs:</p>
+
+  <div class="loop">
+    <!-- Top row: 1 → 2 → 3 -->
+    <div class="loop-row">
+      <div class="loop-step">
+        <div class="step-num">1</div>
+        <div class="step-role">Sisko + Ziyal</div>
+        <div class="step-action">Design a bet — discover what's worth building</div>
+      </div>
+      <div class="loop-arrow">→</div>
+      <div class="loop-step">
+        <div class="step-num">2</div>
+        <div class="step-role">Kira</div>
+        <div class="step-action">Composes slices with requirements and ACs</div>
+      </div>
+      <div class="loop-arrow">→</div>
+      <div class="loop-step">
+        <div class="step-num">3</div>
+        <div class="step-role">O'Brien / Leeta</div>
+        <div class="step-action">Build it — backend, frontend, or both</div>
+      </div>
+    </div>
+    <!-- Down arrow on right side: 3 ↓ 4 -->
+    <div class="loop-turn">↓</div>
+    <!-- Bottom row: 6 ← 5 ← 4 (reads right to left) -->
+    <div class="loop-row">
+      <div class="loop-step">
+        <div class="step-num">6</div>
+        <div class="step-role">Kira</div>
+        <div class="step-action">Final acceptance — accept, amend, or reject</div>
+      </div>
+      <div class="loop-arrow">←</div>
+      <div class="loop-step">
+        <div class="step-num">5</div>
+        <div class="step-role">Bashir</div>
+        <div class="step-action">E2E check against acceptance criteria</div>
+      </div>
+      <div class="loop-arrow">←</div>
+      <div class="loop-step">
+        <div class="step-num">4</div>
+        <div class="step-role">Nog</div>
+        <div class="step-action">Code review — quality gates, standards</div>
+      </div>
+    </div>
+    <!-- Up arrow on left side: 6 ↑ 1 -->
+    <div class="loop-return">↑</div>
+  </div>
+
+  <p class="pipeline-note">No human relay. No copy-pasting context between tools. The agents talk to each other.</p>
+  <div class="wire-note">WIREFRAME: This pipeline should animate or have visual flow in final build. The "I get it" moment.</div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 5: TEAM MEETINGS -->
+<section id="meetings">
+  <h2>Not just a pipeline</h2>
+  <h3>Pull roles into a room. Let them argue.</h3>
+  <p>The delivery loop is the default mode. But the best decisions happen when roles with different perspectives sit at the same table.</p>
+  <p>Call a team meeting with any combination of roles. You pick who's in the room and what the question is. They bring their own context, their own biases, their own blind spots — and they push back on each other.</p>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 32px 0;">
+    <div style="padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;">
+      <div style="font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 8px;">Creative alignment</div>
+      <div style="font-size: 14px; color: var(--text-muted); line-height: 1.5; margin-bottom: 10px;">Ziyal + Jake + Vic review a landing page draft. Does the design serve the copy? Does the copy match the brand?</div>
+      <div style="font-size: 12px; color: var(--text-muted); opacity: 0.6;">3 roles, 3 perspectives, one room</div>
+    </div>
+    <div style="padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;">
+      <div style="font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 8px;">Architecture risk</div>
+      <div style="font-size: 14px; color: var(--text-muted); line-height: 1.5; margin-bottom: 10px;">Dax + O'Brien + Odo debate whether a new integration is worth the attack surface. The architect, the builder, and the security analyst disagree productively.</div>
+      <div style="font-size: 12px; color: var(--text-muted); opacity: 0.6;">Trade-offs surfaced before code is written</div>
+    </div>
+    <div style="padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;">
+      <div style="font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 8px;">Sprint planning</div>
+      <div style="font-size: 14px; color: var(--text-muted); line-height: 1.5; margin-bottom: 10px;">Sisko + Kira + O'Brien scope the next slice. What's the bet? What's the smallest thing we can build to test it? What's actually feasible?</div>
+      <div style="font-size: 12px; color: var(--text-muted); opacity: 0.6;">Discovery, delivery, and engineering aligned</div>
+    </div>
+  </div>
+
+  <p style="font-size: 16px; color: var(--text-muted);">You're always in the room. You set the agenda, you hear the arguments, you make the call. The roles give you perspectives you'd otherwise have to hold in your own head.</p>
+  <div class="wire-note">WIREFRAME: These meeting examples should feel like cards you could "start" — imagine a button on each one in the final build.</div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 6: THE ROSTER -->
+<!-- SECTION 5: TEAM MEETINGS is above -->
+<!-- Numbering: 1-Hero, 2-Problem, 3-What, 4-Loop, 5-Meetings, 6-Roster, 7-Get Involved, 8-Footer -->
+<section id="roster">
+  <h2>The roster</h2>
+  <h3>Meet the team</h3>
+  <p>Each role has its own definition file — responsibilities, decision rights, anti-patterns, and skills. Use the built-in roster or write your own.</p>
+
+  <h4 style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--green); margin: 32px 0 16px;">The delivery cycle</h4>
+  <div class="roster">
+    <div class="role-card">
+      <div class="role-name">Sisko</div>
+      <div class="role-title">Product Manager</div>
+      <div class="role-desc">Discovers what to build through bets and experiments, not roadmaps.</div>
+    </div>
+    <div class="role-card">
+      <div class="role-name">Ziyal</div>
+      <div class="role-title">Product Designer</div>
+      <div class="role-desc">UX flows, wireframes, specs, accessibility. Design as discovery partner.</div>
+    </div>
+    <div class="role-card">
+      <div class="role-name">Kira</div>
+      <div class="role-title">Delivery Coordinator</div>
+      <div class="role-desc">Composes slices with requirements, evaluates delivery, final acceptance.</div>
+    </div>
+    <div class="role-card">
+      <div class="role-name">O'Brien</div>
+      <div class="role-title">Implementor</div>
+      <div class="role-desc">Autonomous code execution — from commission to merge.</div>
+    </div>
+    <div class="role-card">
+      <div class="role-name">Leeta</div>
+      <div class="role-title">Frontend Engineer</div>
+      <div class="role-desc">Builds UI prototypes fast to test with real users.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Nog</div>
+      <div class="role-title">Code Review — Planned</div>
+      <div class="role-desc">Quality gates, standards enforcement, merge decisions.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Bashir</div>
+      <div class="role-title">QA — Planned</div>
+      <div class="role-desc">E2E acceptance criteria checks, test strategy, bug triage.</div>
+    </div>
+  </div>
+
+  <h4 style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--purple); margin: 32px 0 16px;">Creative &amp; content roles</h4>
+  <div class="roster">
+    <div class="role-card planned">
+      <div class="role-name">Jake</div>
+      <div class="role-title">Copywriter — Planned</div>
+      <div class="role-desc">All written content — headlines, body copy, blog posts, messaging.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Vic Fontaine</div>
+      <div class="role-title">Creative Director — Planned</div>
+      <div class="role-desc">Brand voice, creative quality bar. "Does this play?"</div>
+    </div>
+  </div>
+
+  <h4 style="font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--orange); margin: 32px 0 16px;">Advisory &amp; specialist roles</h4>
+  <div class="roster">
+    <div class="role-card">
+      <div class="role-name">Dax</div>
+      <div class="role-title">Architect</div>
+      <div class="role-desc">Keeps architecture clean and right-sized for where you actually are.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Worf</div>
+      <div class="role-title">DevOps — Planned</div>
+      <div class="role-desc">CI/CD, infrastructure, deployment pipelines.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Odo</div>
+      <div class="role-title">Security — Planned</div>
+      <div class="role-desc">Threat modeling, audit, compliance.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Quark</div>
+      <div class="role-title">Business Analyst — Planned</div>
+      <div class="role-desc">Metrics, business viability, cost-benefit analysis.</div>
+    </div>
+    <div class="role-card planned">
+      <div class="role-name">Garak</div>
+      <div class="role-title">Pen Tester — Planned</div>
+      <div class="role-desc">Probes for vulnerabilities with the patience of a tailor and the instincts of a spy.</div>
+    </div>
+  </div>
+
+  <div class="roster-footer">
+    Don't see the role you need? Write your own. A role is a <code>ROLE.md</code> file with a prompt.
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- SECTION 7: GET INVOLVED -->
+<section id="contribute">
+  <h2>Open source</h2>
+  <h3>Build with us</h3>
+  <p>Dax is open source under a permissive license. The framework works today — and there's a lot to do.</p>
+
+  <div class="involve-grid">
+    <a href="#" class="involve-card">
+      <div class="involve-icon">&#9654;</div>
+      <div class="involve-title">Use it</div>
+      <div class="involve-desc">Clone the repo, set up your first team, break things. The README gets you running in 5 minutes.</div>
+    </a>
+    <a href="#" class="involve-card">
+      <div class="involve-icon">&#9998;</div>
+      <div class="involve-title">Contribute</div>
+      <div class="involve-desc">Check the "good first issue" tags. Write a role, fix a bug, improve the bridge. PRs welcome.</div>
+    </a>
+    <a href="#" class="involve-card">
+      <div class="involve-icon">&#128172;</div>
+      <div class="involve-title">Join the conversation</div>
+      <div class="involve-desc">Ask questions, share what you're building, find collaborators. The Discord is where the team hangs out.</div>
+    </a>
+  </div>
+
+  <p class="involve-closer">No waitlist. No signup forms. A repo and a Discord. <strong>Come build.</strong></p>
+  <div class="wire-note">WIREFRAME: "Get Involved" is the real conversion section. Three active engagement paths. Medium article moves to footer.</div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div>Dax &middot; open source</div>
+  <div>
+    <a href="#">GitHub</a>
+    <a href="#">Discord</a>
+    <a href="#">Medium</a>
+    <a href="#">Apache 2.0 License</a>
+  </div>
+</footer>
+
+</body>
+</html>

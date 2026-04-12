@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Rubicon</title>
+<title>Operations Center</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <style>
   /* ── CSS variables (kept for JS compatibility, remapped to clean palette) ── */
@@ -55,6 +55,16 @@
     font-size: 20px;
     font-weight: 700;
     color: #111827;
+    line-height: 1.2;
+  }
+
+  .header-subtitle {
+    font-size: 11px;
+    font-weight: 400;
+    color: #9ca3af;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-top: 1px;
   }
 
   .header-status {
@@ -716,7 +726,10 @@
 
   <!-- ── HEADER ──────────────────────────────────────────────────────── -->
   <div class="header">
-    <div class="header-title">The Rubicon</div>
+    <div>
+      <div class="header-title">Ops</div>
+      <div class="header-subtitle">Operations Center</div>
+    </div>
     <div class="header-status">
       <div class="header-status-dot" id="header-status-dot"></div>
       <span id="watcher-status-text">ONLINE</span>

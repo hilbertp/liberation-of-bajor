@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile, execSync } = require('child_process');
-const { appendSliceLog, updateSliceLog } = require('./slicelog');
+const { appendTimesheet, updateTimesheet } = require('./slicelog');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -624,27 +624,35 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
             closeCommissionBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'Incomplete metrics in DONE report');
             recordSessionResult(false, tokensIn, tokensOut, costUsd);
           } else {
-            // --- Write Point 1: append slicelog row (Bet 3) ---
+            // --- Write Point 1: append timesheet row (Bet 3) ---
             const commissionMeta = parseFrontmatter(commissionContent) || {};
             const expectedHours = commissionMeta.expected_human_hours && commissionMeta.expected_human_hours !== 'null'
               ? parseFloat(commissionMeta.expected_human_hours)
               : null;
             const doneTokensIn  = parseInt(doneMeta.tokens_in, 10);
             const doneTokensOut = parseInt(doneMeta.tokens_out, 10);
-            const slicelogCost  = computeCost(doneTokensIn, doneTokensOut);
+            const timesheetCost = computeCost(doneTokensIn, doneTokensOut);
 
-            // slicelog write point 1 — append row at DONE
-            appendSliceLog({
-              id: String(id),
+            // timesheet write point 1 — append watcher row at DONE
+            appendTimesheet({
+              ts: new Date(pickupTime).toISOString(),
+              role: 'obrien',
+              source: 'watcher',
+              commission_id: String(id),
               title: (commissionMeta.title || title || '').replace(/^["']|["']$/g, ''),
-              runtime: 'legacy',
+              phase: null,
+              human_hours: parseFloat(doneMeta.estimated_human_hours),
+              human_role: null,
+              actual_minutes: null,
+              notes: null,
+              deliverable: null,
+              slice: null,
               tokens_in: doneTokensIn,
               tokens_out: doneTokensOut,
-              cost_usd: slicelogCost,
+              cost_usd: timesheetCost,
               elapsed_ms: parseInt(doneMeta.elapsed_ms, 10),
-              estimated_human_hours: parseFloat(doneMeta.estimated_human_hours),
               compaction_occurred: doneMeta.compaction_occurred === 'true',
-              estimated_by: 'obrien',
+              runtime: 'legacy',
               expected_human_hours: isNaN(expectedHours) ? null : expectedHours,
               result: null,
               cycle: null,
@@ -670,8 +678,8 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
           writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr);
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'no_report' });
           registerEvent(id, 'ERROR', { reason: 'no_report', durationMs });
-          // slicelog write point 2 — update row at terminal state
-          updateSliceLog(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
+          // timesheet write point 2 — update watcher row at terminal state
+          updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
           closeCommissionBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'No report written');
           recordSessionResult(false, tokensIn, tokensOut, costUsd);
         }
@@ -711,8 +719,8 @@ function invokeOBrien(commissionContent, donePath, inProgressPath, errorPath, id
         writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
         registerEvent(id, 'ERROR', { reason, exitCode: err.code, durationMs });
-        // slicelog write point 2 — update row at terminal state
-        updateSliceLog(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
+        // timesheet write point 2 — update watcher row at terminal state
+        updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
         closeCommissionBlock(false, durationMs, tokensIn, tokensOut, costUsd, reasonDisplay);
         recordSessionResult(false, tokensIn, tokensOut, costUsd);
       }
@@ -1106,8 +1114,8 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
   registerEvent(id, 'ACCEPTED', { reason, cycle });
   log('info', 'evaluator', { id, verdict: 'ACCEPTED', cycle, durationMs });
 
-  // slicelog write point 2 — update row at terminal state
-  updateSliceLog(id, { result: 'ACCEPTED', cycle, ts_result: new Date().toISOString() });
+  // timesheet write point 2 — update watcher row at terminal state
+  updateTimesheet(id, { result: 'ACCEPTED', cycle, ts_result: new Date().toISOString() });
 
   const acceptedPath = path.join(QUEUE_DIR, `${id}-ACCEPTED.md`);
   try {
@@ -1235,8 +1243,8 @@ function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) 
   registerEvent(id, 'STUCK', { reason: 'amendment cap reached', cycle, branch: branchName });
   log('warn', 'evaluator', { id, verdict: 'STUCK', cycle, durationMs });
 
-  // slicelog write point 2 — update row at terminal state
-  updateSliceLog(id, { result: 'STUCK', cycle, ts_result: new Date().toISOString() });
+  // timesheet write point 2 — update watcher row at terminal state
+  updateTimesheet(id, { result: 'STUCK', cycle, ts_result: new Date().toISOString() });
 
   const stuckPath = path.join(QUEUE_DIR, `${id}-STUCK.md`);
   try {
