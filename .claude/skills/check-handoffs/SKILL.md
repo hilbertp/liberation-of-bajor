@@ -11,6 +11,27 @@ You are checking the project for handoff files addressed to you (the current rol
 
 Handoff files follow the naming convention `HANDOFF-*.md` and live in the role's directory under `repo/.claude/roles/{role-name}/`. They may also appear in the project root or other shared locations.
 
+## T&T Self-Audit (run before inbox scan)
+
+Before checking for handoffs, verify that your previous session's time was logged:
+
+1. **Identify your role name** (lowercase, e.g. `dax`, `kira`, `sisko`).
+
+2. **Read `bridge/tt-audit.jsonl`.** Find the most recent line where `"role"` matches your role name.
+   - If **no entry exists** for your role — skip this entire self-audit. This is your first session; there's nothing to check.
+
+3. **If an entry is found**, note its `ts` value. Read `bridge/timesheet.jsonl`. Look for any line where `"role"` matches your role name **and** `"ts"` is chronologically after the audit entry's `ts`.
+
+4. **If no timesheet entry is found** after that timestamp, display this warning prominently:
+
+   > ⚠️ **T&T gap detected.** No timesheet entry found since your last outbound handoff (`<ts from audit entry>`). Run `ds9:estimate-hours` to log your previous session before proceeding.
+
+   **Do not block.** Show the warning and then continue to the inbox scan below.
+
+5. **If a matching timesheet entry is found** — no warning needed. Proceed normally.
+
+---
+
 ## Steps
 
 1. **Identify your role name.** Check which DS9 role you are currently operating as (e.g., ziyal, sisko, kira, dax, leeta, obrien, bashir, nog, worf, odo).
