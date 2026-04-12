@@ -757,14 +757,6 @@
   <div class="active-brief-aside" id="active-brief-aside"></div>
   </div>
 
-  <!-- ── STAGED BRIEFS (preserved from 047) ─────────────────────── -->
-  <div class="staged-panel" id="staged-panel">
-    <div class="staged-section-label">Awaiting Your Review</div>
-    <div id="staged-cards">
-      <div class="staged-empty">No briefs pending review.</div>
-    </div>
-  </div>
-
   <!-- ── QUEUE STATS ─────────────────────────────────────────────────── -->
   <div class="queue-stats">
     <div class="stat-card">
@@ -794,6 +786,7 @@
   <div class="queue-history-row">
     <div class="queue-panel">
       <div class="section-title">Queue</div>
+      <div id="staged-cards"></div>
       <div id="queue-items">
         <div class="queue-empty">Queue is clear.</div>
       </div>
@@ -1147,7 +1140,8 @@
       f.state === 'PENDING' || f.state === 'IN_PROGRESS'
     );
     if (active.length === 0) {
-      container.innerHTML = '<div class="queue-empty">Queue is clear.</div>';
+      const hasStagedCards = document.querySelector('#staged-cards .staged-card');
+      container.innerHTML = hasStagedCards ? '' : '<div class="queue-empty">Queue is clear.</div>';
       return;
     }
     container.innerHTML = active.map(item => {
@@ -1167,11 +1161,24 @@
   fetchQueue();
   setInterval(fetchQueue, 5000);
 
+  // ── Queue empty-state helper ────────────────────────────────────────────
+  function updateQueueEmptyState() {
+    const queueContainer = document.getElementById('queue-items');
+    const hasQueueItems = queueContainer.querySelector('.queue-item');
+    const hasStagedCards = document.querySelector('#staged-cards .staged-card');
+    if (!hasQueueItems && !hasStagedCards) {
+      queueContainer.innerHTML = '<div class="queue-empty">Queue is clear.</div>';
+    } else if (!hasQueueItems) {
+      queueContainer.innerHTML = '';
+    }
+  }
+
   // ── Staged briefs panel ────────────────────────────────────────────────
   function renderStagedCards(items) {
     const container = document.getElementById('staged-cards');
     if (!items || items.length === 0) {
-      container.innerHTML = '<div class="staged-empty">No briefs pending review.</div>';
+      container.innerHTML = '';
+      updateQueueEmptyState();
       return;
     }
 
@@ -1234,6 +1241,7 @@
       const readEl = document.getElementById('staged-details-read-' + eid);
       if (readEl) readEl.innerHTML = marked.parse(item.body || '');
     }
+    updateQueueEmptyState();
   }
 
   // Store raw body per id so Edit textarea always has the current content
@@ -1333,10 +1341,7 @@
       if (res.ok) {
         const card = document.getElementById('staged-card-' + id);
         if (card) card.remove();
-        const container = document.getElementById('staged-cards');
-        if (!container.querySelector('.staged-card')) {
-          container.innerHTML = '<div class="staged-empty">No briefs pending review.</div>';
-        }
+        updateQueueEmptyState();
         fetchBridge();
       }
     } catch (_) {}
@@ -1397,10 +1402,7 @@
       if (res.ok) {
         const card = document.getElementById('staged-card-' + id);
         if (card) card.remove();
-        const container = document.getElementById('staged-cards');
-        if (!container.querySelector('.staged-card')) {
-          container.innerHTML = '<div class="staged-empty">No briefs pending review.</div>';
-        }
+        updateQueueEmptyState();
       }
     } catch (_) {}
   }
