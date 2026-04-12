@@ -1068,30 +1068,40 @@
       hbEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
 
-    // Brief history table
+    // Brief history table — sourced from register.jsonl via data.recent
     const tbody = document.getElementById('brief-tbody');
-    if (tbody && data.briefs.length > 0) {
-      const rows = data.briefs.slice(0, 15);
-      const stateToClass = {
-        DONE:        'tag-done',
-        ERROR:       'tag-error',
-        PENDING:     'tag-pending',
-        IN_PROGRESS: 'tag-progress',
-      };
-      tbody.innerHTML = rows.map(c => {
-        const isMerge  = /merge/i.test(c.title);
-        const tagCls   = isMerge ? 'tag-merge' : (stateToClass[c.state] ?? 'tag-pending');
-        const typeLabel = isMerge ? 'MERGE' : 'MISSION';
-        const statusCls = stateToClass[c.state] ?? 'tag-pending';
-        const statusLabel = c.state === 'IN_PROGRESS' ? 'IN PROG' : c.state;
-        return `<tr>
-          <td>${escHtml(c.id)}</td>
-          <td>${escHtml(c.title)}</td>
-          <td><span class="tag ${tagCls}">${escHtml(typeLabel)}</span></td>
-          <td><span class="tag ${statusCls}">${escHtml(statusLabel)}</span></td>
-          <td class="time-cell">\u2014</td>
-        </tr>`;
-      }).join('');
+    if (tbody) {
+      const rows = (data.recent ?? []).slice(0, 15);
+      if (rows.length > 0) {
+        const outcomeToClass = {
+          DONE:  'tag-done',
+          ERROR: 'tag-error',
+        };
+        tbody.innerHTML = rows.map(c => {
+          const isMerge   = /merge/i.test(c.title ?? '');
+          const outcome   = c.outcome ?? 'DONE';
+          const tagCls    = isMerge ? 'tag-merge' : (outcomeToClass[outcome] ?? 'tag-done');
+          const typeLabel = isMerge ? 'MERGE' : 'BRIEF';
+          const statusCls = outcomeToClass[outcome] ?? 'tag-done';
+          const reviewBadge = c.reviewStatus === 'accepted'
+            ? '<span class="tag tag-done" style="margin-left:4px">✓</span>'
+            : c.reviewStatus === 'amendment_required'
+              ? '<span class="tag tag-error" style="margin-left:4px">AMD</span>'
+              : '';
+          const dur = c.durationMs != null
+            ? (() => { const s = Math.round(c.durationMs / 1000); return s < 60 ? `${s}s` : `${Math.floor(s/60)}m${s%60}s`; })()
+            : '\u2014';
+          return `<tr>
+            <td>${escHtml(c.id)}</td>
+            <td>${escHtml(c.title ?? '')}${reviewBadge}</td>
+            <td><span class="tag ${tagCls}">${escHtml(typeLabel)}</span></td>
+            <td><span class="tag ${statusCls}">${escHtml(outcome)}</span></td>
+            <td class="time-cell">${dur}</td>
+          </tr>`;
+        }).join('');
+      } else {
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:12px">No completed briefs yet.</td></tr>';
+      }
     }
 
     // Pipeline
