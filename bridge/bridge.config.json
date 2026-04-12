@@ -8,5 +8,6 @@
   "claudeCommand": "claude",
   "claudeArgs": ["-p", "--output-format", "json", "--permission-mode", "bypassPermissions"],
   "projectDir": "..",
-  "maxRetries": 0
+  "maxRetries": 0,
+  "coworkSessionKey": ""
 }
