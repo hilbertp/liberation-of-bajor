@@ -341,7 +341,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const stagedMatch = pathname.match(/^\/api\/bridge\/staged\/(\d+)\/(brief|amend|reject|update-body)$/);
+  const stagedMatch = pathname.match(/^\/api\/bridge\/staged\/(\d+)\/(approve|brief|amend|reject|update-body)$/);
   if (stagedMatch) {
     if (req.method !== 'POST') {
       res.writeHead(405, { 'Content-Type': 'text/plain' });
@@ -365,7 +365,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (action === 'brief') {
+    if (action === 'approve' || action === 'brief') {
       try {
         let content = fs.readFileSync(filePath, 'utf8');
         content = updateFrontmatter(content, { status: 'PENDING' });

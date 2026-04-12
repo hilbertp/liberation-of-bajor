@@ -1180,7 +1180,7 @@
       } else {
         actionsHtml = `
           <div class="staged-card-actions" id="staged-actions-${eid}">
-            <button class="staged-btn staged-btn-brief" onclick="stagedBrief('${eid}')">Brief</button>
+            <button class="staged-btn staged-btn-brief" onclick="stagedApprove('${eid}')">Approve</button>
             <button class="staged-btn staged-btn-amend" onclick="stagedShowAmend('${eid}')">Amend</button>
             <button class="staged-btn staged-btn-reject" onclick="stagedShowReject('${eid}')">Reject</button>
           </div>`;
@@ -1317,9 +1317,9 @@
     }
   }
 
-  async function stagedBrief(id) {
+  async function stagedApprove(id) {
     try {
-      const res = await fetch('/api/bridge/staged/' + id + '/brief', { method: 'POST' });
+      const res = await fetch('/api/bridge/staged/' + id + '/approve', { method: 'POST' });
       if (res.ok) {
         const card = document.getElementById('staged-card-' + id);
         if (card) card.remove();
@@ -1351,7 +1351,7 @@
     const actions = document.getElementById('staged-actions-' + id);
     if (!actions) return;
     actions.innerHTML = `
-      <button class="staged-btn staged-btn-brief" onclick="stagedBrief('${id}')">Brief</button>
+      <button class="staged-btn staged-btn-brief" onclick="stagedApprove('${id}')">Approve</button>
       <button class="staged-btn staged-btn-amend" onclick="stagedShowAmend('${id}')">Amend</button>
       <button class="staged-btn staged-btn-reject" onclick="stagedShowReject('${id}')">Reject</button>`;
   }
