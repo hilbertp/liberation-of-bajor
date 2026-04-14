@@ -1563,6 +1563,25 @@
           <div id="pipeline-mission-goal" class="active-brief-stage" style="opacity:0.65;font-size:0.82em;margin-top:2px"></div>
           <div id="pipeline-mission-stage" class="active-brief-stage"></div>
         </div>
+        <div id="mission-idle-text" class="active-brief-idle">No active brief.</div>
+        <!-- Error display (shown when active slice is in ERROR state) -->
+        <div id="error-display" style="display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <div id="error-display-badge" class="active-brief-id" style="display:none"></div>
+            <span id="error-display-tag" class="tag tag-error" style="font-size:0.75em">error</span>
+          </div>
+          <div id="error-display-title" class="active-brief-title" style="margin-bottom:2px"></div>
+          <div id="error-display-reason" style="color:#dc2626;font-weight:500;font-size:0.92em;margin-top:4px"></div>
+          <div id="error-display-output" style="color:#6b7280;font-size:0.82em;margin-top:6px;white-space:pre-wrap;max-height:80px;overflow:auto;font-family:monospace;background:#f3f4f6;border-radius:4px;padding:6px 8px"></div>
+          <button id="error-dismiss-btn" style="margin-top:10px;padding:4px 14px;font-size:0.82em;border:1px solid #d1d5db;border-radius:4px;background:#fff;cursor:pointer;color:#374151">Dismiss</button>
+        </div>
+      </div>
+      <div id="mission-elapsed" class="active-brief-elapsed" style="display:none">00:00</div>
+    </div>
+    <div class="pipeline-stages" id="pipeline-stages"></div>
+  </div>
+  <div class="active-brief-aside" id="active-brief-aside"></div>
+  </div>
 
         <!-- Idle state content -->
         <div id="mission-idle-text" class="active-brief-idle">
@@ -1798,6 +1817,44 @@
     container.innerHTML = html;
   }
 
+  // ── Error display state ─────────────────────────────────────────────────
+  const dismissedErrors = new Set();   // IDs the user has dismissed this session
+  let currentErrorData  = null;        // cached error detail from API
+  let currentErrorId    = null;        // which slice ID the cached error is for
+
+  const REASON_LABELS = {
+    inactivity_timeout: 'Inactivity timeout',
+    timeout:            'Process timed out',
+    crash:              'Process crashed',
+    non_zero_exit:      'Process exited with error',
+    no_report:          'No report written',
+    incomplete_metrics: 'Incomplete metrics in report',
+    invalid_brief:      'Invalid brief',
+    signal:             'Killed by signal',
+    nog_escalation:     'Escalated by Nog',
+  };
+
+  function humanReason(raw) {
+    return REASON_LABELS[raw] || raw || 'Unknown error';
+  }
+
+  async function fetchErrorDetail(id) {
+    try {
+      const res = await fetch(`/api/bridge/errors/${id}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) { return null; }
+  }
+
+  // Wire up dismiss button once
+  document.getElementById('error-dismiss-btn').addEventListener('click', () => {
+    if (currentErrorId) dismissedErrors.add(currentErrorId);
+    document.getElementById('error-display').style.display = 'none';
+    document.getElementById('mission-idle-text').style.display = '';
+    currentErrorData = null;
+    currentErrorId = null;
+  });
+
   // Elapsed time: computed from a fixed start timestamp, no re-anchoring
   let briefStartTime = null;
   let lastBriefId    = null;
@@ -1848,25 +1905,70 @@
       }
     }
 
-    const activeContent = document.getElementById('mission-active-content');
-    const idleEl        = document.getElementById('mission-idle-text');
-    const timerBlock    = document.getElementById('active-timer-block');
-    const elapsedEl     = document.getElementById('mission-elapsed');
-    const badgeEl       = document.getElementById('mission-id-badge');
-    const titleEl       = document.getElementById('pipeline-mission-title');
-    const descEl        = document.getElementById('pipeline-mission-desc');
-    const footerEl      = document.getElementById('active-brief-footer');
-    const progressBar   = document.getElementById('active-progress-bar');
+    // Detect ERROR state: most recent errored brief not yet dismissed
+    const errorBrief = briefs.find(b => b.state === 'ERROR' && !dismissedErrors.has(b.id));
+    const showError = !activeStageKey && errorBrief;
 
-    if (isBuilding && mission) {
-      // ── Active state ──
-      currentMission = mission;
-      badgeEl.textContent   = `#${escHtml(mission.id)}`;
-      titleEl.textContent   = mission.title || '\u2014';
-      descEl.textContent    = mission.goal || '';
-      activeContent.style.display = '';
-      idleEl.style.display  = 'none';
-      footerEl.style.display = '';
+    renderPipeline(activeStageKey);
+
+    const badgeEl     = document.getElementById('mission-id-badge');
+    const textEl      = document.getElementById('mission-text');
+    const idleEl      = document.getElementById('mission-idle-text');
+    const elapsedEl   = document.getElementById('mission-elapsed');
+    const titleEl     = document.getElementById('pipeline-mission-title');
+    const stageEl     = document.getElementById('pipeline-mission-stage');
+    const progressBar = document.getElementById('active-progress-bar');
+    const errorEl     = document.getElementById('error-display');
+
+    if (showError) {
+      // Hide normal active-build elements
+      badgeEl.style.display     = 'none';
+      textEl.style.display      = 'none';
+      idleEl.style.display      = 'none';
+      elapsedEl.style.display   = 'none';
+      progressBar.style.display = 'none';
+      briefStartTime = null;
+      lastBriefId    = null;
+
+      // Populate error display
+      const eid = errorBrief.id;
+      document.getElementById('error-display-badge').textContent = `#${escHtml(eid)}`;
+      document.getElementById('error-display-badge').style.display = '';
+      document.getElementById('error-display-title').textContent = errorBrief.title || '\u2014';
+      errorEl.style.display = '';
+
+      // Fetch error details (only once per error ID)
+      if (currentErrorId !== eid) {
+        currentErrorId = eid;
+        currentErrorData = null;
+        document.getElementById('error-display-reason').textContent = 'Loading error details\u2026';
+        document.getElementById('error-display-output').textContent = '';
+        fetchErrorDetail(eid).then(detail => {
+          if (currentErrorId !== eid) return; // stale
+          currentErrorData = detail;
+          if (detail && !detail.error) {
+            document.getElementById('error-display-reason').textContent = humanReason(detail.reason);
+            const output = detail.lastOutput
+              ? (detail.lastOutput.length > 200 ? '\u2026' + detail.lastOutput.slice(-200) : detail.lastOutput)
+              : 'No output captured';
+            document.getElementById('error-display-output').textContent = output;
+          } else {
+            document.getElementById('error-display-reason').textContent = 'Error details not available';
+            document.getElementById('error-display-output').textContent = '';
+          }
+        });
+      }
+    } else if (activeStageKey && mission) {
+      errorEl.style.display = 'none';
+      badgeEl.textContent  = `Brief ${escHtml(mission.id)}`;
+      badgeEl.style.display = '';
+      titleEl.textContent  = mission.title || '\u2014';
+      const goalEl = document.getElementById('pipeline-mission-goal');
+      if (goalEl) goalEl.textContent = mission.goal || '';
+      const stageMeta = PIPELINE_STAGES.find(s => s.key === activeStageKey);
+      stageEl.textContent  = stageMeta ? stageMeta.label : activeStageKey;
+      textEl.style.display = '';
+      idleEl.style.display = 'none';
       progressBar.style.display = (heartbeat.status === 'processing') ? '' : 'none';
 
       // Invocation gap indicator: visible only during IN_PROGRESS with no first output yet
@@ -1887,11 +1989,11 @@
         timerBlock.style.display = 'none';
       }
     } else {
-      // ── Idle states ──
-      currentMission = null;
-      activeContent.style.display = 'none';
-      timerBlock.style.display = 'none';
-      footerEl.style.display = 'none';
+      errorEl.style.display   = 'none';
+      badgeEl.style.display   = 'none';
+      textEl.style.display    = 'none';
+      idleEl.style.display    = '';
+      elapsedEl.style.display = 'none';
       progressBar.style.display = 'none';
       const gapElIdle = document.getElementById('invocation-gap-indicator');
       if (gapElIdle) gapElIdle.style.display = 'none';

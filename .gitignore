@@ -17,6 +17,10 @@ bridge/queue/*.md
 bridge/queue/*.json
 !bridge/queue/.gitkeep
 
+# Error JSON records (written by watcher at runtime)
+bridge/errors/*.json
+!bridge/errors/.gitkeep
+
 # Register log — append-only runtime file, not source code
 bridge/register.jsonl
 

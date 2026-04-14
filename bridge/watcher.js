@@ -679,7 +679,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
               invalid: metricsValid.invalid,
               durationMs,
             });
-            writeErrorFile(errorPath, id, 'incomplete_metrics', null, stdout, '', { missingFields: metricsValid.invalid });
+            writeErrorFile(errorPath, id, 'incomplete_metrics', null, stdout, '', { missingFields: metricsValid.invalid, durationMs });
             log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'incomplete_metrics' });
             registerEvent(id, 'ERROR', { reason: 'incomplete_metrics', invalid: metricsValid.invalid, durationMs });
             closeBriefBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'Incomplete metrics in DONE report');
@@ -736,7 +736,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
             reason: 'no_report',
             durationMs,
           });
-          writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr);
+          writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr, { durationMs });
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'no_report' });
           registerEvent(id, 'ERROR', { reason: 'no_report', durationMs });
           // timesheet write point 2 — update watcher row at terminal state
@@ -755,7 +755,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
           const inactivityLimitMinutes = Math.round(effectiveInactivityMs / 60000);
           reason = 'inactivity_timeout';
           reasonDisplay = `Inactivity timeout (${inactivityLimitMinutes}min)`;
-          extra = { lastActivitySecondsAgo, inactivityLimitMinutes };
+          extra = { lastActivitySecondsAgo, inactivityLimitMinutes, durationMs };
           log('error', 'inactivity_timeout', {
             id,
             msg: 'Brief killed due to inactivity',
@@ -767,6 +767,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
         } else {
           reason = (err.killed && err.signal === 'SIGTERM') ? 'timeout' : 'crash';
           reasonDisplay = reason === 'timeout' ? 'Timed out' : 'Process failed';
+          extra = { durationMs };
           log('error', reason === 'timeout' ? 'timeout' : 'error', {
             id,
             msg: reason === 'timeout' ? 'Brief timed out' : 'claude -p failed',
@@ -1420,6 +1421,25 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
     fs.writeFileSync(errorPath, content);
   } catch (writeErr) {
     log('error', 'error', { id, msg: 'Failed to write ERROR file', error: writeErr.message });
+  }
+
+  // Write structured JSON error record for the Ops Center API
+  try {
+    const errorsDir = path.resolve(__dirname, 'errors');
+    if (!fs.existsSync(errorsDir)) fs.mkdirSync(errorsDir, { recursive: true });
+    const lastOutput = ((stdout || '') + (stderr || '')).slice(-2000) || '';
+    const jsonRecord = {
+      ts: completed,
+      slice_id: String(id),
+      reason: reason,
+      exitCode: exitCode != null ? Number(exitCode) : null,
+      signal: signal || null,
+      lastOutput,
+      durationMs: (extra && extra.durationMs != null) ? extra.durationMs : null,
+    };
+    fs.writeFileSync(path.join(errorsDir, `${id}-ERROR.json`), JSON.stringify(jsonRecord, null, 2));
+  } catch (_) {
+    // Must never crash the watcher
   }
 }
 
