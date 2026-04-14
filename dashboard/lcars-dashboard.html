@@ -1559,8 +1559,9 @@
         <div id="mission-active-content" style="display:none">
           <div id="mission-id-badge" class="active-brief-id"></div>
           <div id="pipeline-mission-title" class="active-brief-title"></div>
-          <div id="pipeline-mission-desc" class="active-brief-desc"></div>
-          <div class="pipeline-stages" id="pipeline-stages" style="margin-top:16px"></div>
+          <div id="invocation-gap-indicator" style="display:none;color:#f59e42;font-size:0.82em;margin-top:4px">Invoking O'Brien — waiting for first response…</div>
+          <div id="pipeline-mission-goal" class="active-brief-stage" style="opacity:0.65;font-size:0.82em;margin-top:2px"></div>
+          <div id="pipeline-mission-stage" class="active-brief-stage"></div>
         </div>
 
         <!-- Idle state content -->
@@ -1868,9 +1869,12 @@
       footerEl.style.display = '';
       progressBar.style.display = (heartbeat.status === 'processing') ? '' : 'none';
 
-      renderPipeline(activeStageKey);
+      // Invocation gap indicator: visible only during IN_PROGRESS with no first output yet
+      const gapEl = document.getElementById('invocation-gap-indicator');
+      if (gapEl) {
+        gapEl.style.display = (heartbeat.status === 'processing' && !heartbeat.firstOutputAt) ? '' : 'none';
+      }
 
-      // Timer
       if (heartbeat.brief_elapsed_seconds != null) {
         if (briefStartTime == null || mission.id !== lastBriefId) {
           briefStartTime = Date.now() - (heartbeat.brief_elapsed_seconds * 1000);
@@ -1889,6 +1893,8 @@
       timerBlock.style.display = 'none';
       footerEl.style.display = 'none';
       progressBar.style.display = 'none';
+      const gapElIdle = document.getElementById('invocation-gap-indicator');
+      if (gapElIdle) gapElIdle.style.display = 'none';
       briefStartTime = null;
       lastBriefId    = null;
 

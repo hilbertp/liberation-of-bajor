@@ -14,6 +14,8 @@ const STAGED_DIR   = path.join(REPO_ROOT, 'bridge', 'staged');
 const TRASH_DIR    = path.join(REPO_ROOT, 'bridge', 'trash');
 const DASHBOARD    = path.join(__dirname, 'lcars-dashboard.html');
 
+const FIRST_OUTPUT = path.join(REPO_ROOT, 'bridge', 'first-output.json');
+
 const CORS_ORIGIN  = 'https://dax-dashboard.lovable.app';
 
 const QUEUE_ORDER  = path.join(REPO_ROOT, 'bridge', 'queue-order.json');
@@ -170,6 +172,14 @@ function buildBridgeData() {
       processed_total:           raw.processed_total ?? 0,
     };
   } catch (_) { /* file missing or malformed → keep defaults */ }
+
+  // First-output signal (invocation gap indicator)
+  try {
+    const fo = JSON.parse(fs.readFileSync(FIRST_OUTPUT, 'utf8'));
+    heartbeat.firstOutputAt = fo.firstOutputAt ?? null;
+  } catch (_) {
+    heartbeat.firstOutputAt = null;
+  }
 
   // Register events
   const events = readRegister();
