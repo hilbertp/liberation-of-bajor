@@ -58,33 +58,67 @@
     line-height: 1.2;
   }
 
-  .header-subtitle {
-    font-size: 11px;
-    font-weight: 400;
-    color: #9ca3af;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    margin-top: 1px;
-  }
-
-  .header-status {
-    display: flex;
+  /* ── Health Pill ── */
+  .health-pill {
+    position: relative;
+    display: inline-flex;
     align-items: center;
     gap: 6px;
+    padding: 4px 12px;
+    border-radius: 9999px;
     font-size: 12px;
-    font-weight: 500;
-    color: #6b7280;
+    font-weight: 600;
+    background: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+    cursor: default;
+    user-select: none;
   }
 
-  .header-status-dot {
-    width: 8px;
-    height: 8px;
+  .health-pill.offline {
+    background: #fef2f2;
+    color: #dc2626;
+    border-color: #fecaca;
+  }
+
+  .health-pill-dot {
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    background: #16a34a;
+    background: currentColor;
   }
 
-  .header-status-dot.offline { background: #dc2626; }
-  .header-status-dot.idle { background: #f59e0b; }
+  .health-pill-waveform {
+    display: none;
+    letter-spacing: 1px;
+    font-size: 11px;
+  }
+
+  .health-pill:hover .health-pill-waveform {
+    display: inline;
+  }
+
+  /* ── Health Pill Tooltip ── */
+  .health-pill-tooltip {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: #1f2937;
+    color: #f9fafb;
+    font-size: 11px;
+    font-weight: 400;
+    padding: 8px 12px;
+    border-radius: 6px;
+    white-space: nowrap;
+    z-index: 100;
+    line-height: 1.6;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+
+  .health-pill:hover .health-pill-tooltip {
+    display: block;
+  }
 
   /* ── OPS GRID (4-panel layout) ───────────────────── */
   .ops-grid {
@@ -793,13 +827,15 @@
 
   <!-- ── HEADER ──────────────────────────────────────────────────────── -->
   <div class="header">
-    <div>
-      <div class="header-title">Ops</div>
-      <div class="header-subtitle">Operations Center</div>
-    </div>
-    <div class="header-status">
-      <div class="header-status-dot" id="header-status-dot"></div>
-      <span id="watcher-status-text">ONLINE</span>
+    <div class="header-title">Operations Center</div>
+    <div class="health-pill" id="health-pill">
+      <span class="health-pill-dot"></span>
+      <span class="health-pill-waveform">▲▄▂▄▃</span>
+      <span id="health-pill-label">online</span>
+      <div class="health-pill-tooltip" id="health-pill-tooltip">
+        Watcher: –<br>
+        Last poll: –
+      </div>
     </div>
   </div>
 
@@ -1134,33 +1170,25 @@
     document.getElementById('stat-review').textContent  = '0';
 
 
-    // Header status
-    const statusEl = document.getElementById('watcher-status-text');
-    const dotEl = document.getElementById('header-status-dot');
-    if (statusEl) {
+    // Header health pill
+    const pill = document.getElementById('health-pill');
+    const pillLabel = document.getElementById('health-pill-label');
+    const pillTooltip = document.getElementById('health-pill-tooltip');
+    if (pill) {
       const s = data.heartbeat.status;
-      if (dotEl) dotEl.className = 'header-status-dot';
-      if (s === 'processing') {
-        statusEl.textContent = 'PROCESSING';
-        if (dotEl) dotEl.className = 'header-status-dot';
-      } else if (s === 'active') {
-        statusEl.textContent = 'ONLINE';
-        if (dotEl) dotEl.className = 'header-status-dot';
-      } else if (s === 'idle') {
-        statusEl.textContent = 'IDLE';
-        if (dotEl) dotEl.className = 'header-status-dot idle';
-      } else {
-        statusEl.textContent = 'OFFLINE';
-        if (dotEl) dotEl.className = 'header-status-dot offline';
+      const isOnline = (s === 'processing' || s === 'active' || s === 'idle');
+      pill.className = isOnline ? 'health-pill' : 'health-pill offline';
+      if (pillLabel) pillLabel.textContent = isOnline ? 'online' : 'offline';
+      if (pillTooltip && data.heartbeat.ts) {
+        const hbAge = Math.round((Date.now() - new Date(data.heartbeat.ts).getTime()) / 1000);
+        const latency = hbAge < 60 ? `${hbAge}s ago` : `${Math.round(hbAge / 60)}m ago`;
+        const pad = n => String(n).padStart(2, '0');
+        const d = new Date(data.heartbeat.ts);
+        const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        pillTooltip.innerHTML =
+          `Watcher: ${isOnline ? latency : 'unreachable'}<br>` +
+          `Last poll: ${timeStr}`;
       }
-    }
-
-    // Last heartbeat timestamp
-    const hbEl = document.getElementById('last-heartbeat');
-    if (hbEl && data.heartbeat.ts) {
-      const d = new Date(data.heartbeat.ts);
-      const pad = n => String(n).padStart(2, '0');
-      hbEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
 
     // Brief history table — sourced from register.jsonl via data.recent
