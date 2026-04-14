@@ -22,6 +22,7 @@ After Philipp approves slices, the pipeline executes, reviews, and recovers with
 | **Nog** | Rename Anon → Nog. Kira writes the role spec from scratch. Adds: kanban history per slice (what was tried, assessment, delta to ACs), explicit `i < 6` counter, escalate to Kira at max. | Kira writes spec, O'Brien implements. Not an Anon diagnosis — a clean role definition. |
 | **Error reporting** | Ops Center shows *why* something failed, not just "error" state. | Capture + surface in Ops Center. No auto-retry — Sprint 4. |
 | **Ops Center (Ziyal's design)** | Without it, Sprint 3 pipeline improvements are invisible and the demo doesn't land. | Full spec — all 6 screens. Reference: `ops-dashboard-spec.md` + `ops-ux-concept.html`. Nog live / Bashir "coming soon" handled at build time. |
+| **Invocation gap indicator** | After Philipp approves a slice there are 3–5 seconds before O'Brien produces output — the panel shows nothing happening. A transient "Invoking O'Brien — waiting for first response…" label bridges this gap. | Full spec in `ops-dashboard-spec.md` addendum 2026-04-14. Disappears the moment O'Brien's first output arrives. |
 
 ---
 
