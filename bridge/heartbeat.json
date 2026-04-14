@@ -1,16 +1,16 @@
 {
-  "ts": "2026-04-11T22:52:06.349Z",
-  "status": "processing",
-  "current_commission": "059",
-  "current_commission_title": "Recovery — commit 057 work and complete 058 ROLE.md files",
-  "current_commission_goal": "All uncommitted work from commissions 057 and 058 is committed on slice/57-unified-timesheet, and every DS9 role has complete tracking guidance in their ROLE.md.",
-  "commission_elapsed_seconds": 24,
-  "last_activity_ts": "2026-04-11T22:51:41.776Z",
-  "processed_total": 32,
+  "ts": "2026-04-14T22:30:12.383Z",
+  "status": "idle",
+  "current_brief": null,
+  "current_brief_title": null,
+  "current_brief_goal": null,
+  "brief_elapsed_seconds": null,
+  "last_activity_ts": null,
+  "processed_total": 71,
   "queue": {
     "waiting": 0,
-    "active": 3,
-    "done": 45,
-    "error": 6
+    "active": 0,
+    "done": 4,
+    "error": 3
   }
 }
