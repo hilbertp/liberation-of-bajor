@@ -571,6 +571,21 @@ let idlePrintCounter = 0;
  * avoid ENOENT when O'Brien's crash recovery already handled it).
  */
 function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal) {
+  // Ensure O'Brien starts from the latest main so the new branch includes all merged work.
+  // Skip for amendments — they continue on the existing branch, not from main.
+  const briefMeta = parseFrontmatter(briefContent) || {};
+  const isAmendment = briefMeta.references && briefMeta.references !== 'null';
+  if (!isAmendment) {
+    try {
+      execSync('git checkout main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+      log('info', 'branch', { id, msg: 'Checked out main before O\'Brien invocation' });
+    } catch (err) {
+      log('warn', 'branch', { id, msg: 'Failed to checkout main before invocation — proceeding on current HEAD', error: err.message });
+    }
+  } else {
+    log('info', 'branch', { id, msg: 'Amendment brief — skipping checkout main (staying on current branch)' });
+  }
+
   const doneTemplate = [
     '',
     '## DONE report template',
@@ -1143,6 +1158,41 @@ function mergeBranch(id, branchName, title) {
   const commitMsg = `merge: ${branchName} — ${title || `brief ${id}`} (brief ${id})`;
   try {
     execSync('git checkout main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+
+    // Regression guard: if the branch's dashboard HTML is significantly shorter
+    // than main's, O'Brien likely built on a stale base and is missing features.
+    try {
+      const mainLines = parseInt(execSync(
+        `git show main:dashboard/lcars-dashboard.html | wc -l`,
+        { cwd: PROJECT_DIR, encoding: 'utf-8' }
+      ).trim(), 10);
+      const branchLines = parseInt(execSync(
+        `git show ${branchName}:dashboard/lcars-dashboard.html | wc -l`,
+        { cwd: PROJECT_DIR, encoding: 'utf-8' }
+      ).trim(), 10);
+
+      if (mainLines > 0 && branchLines < mainLines * 0.85) {
+        const pct = Math.round((1 - branchLines / mainLines) * 100);
+        log('warn', 'merge', {
+          id,
+          msg: `Regression guard: branch HTML is ${pct}% shorter than main (${branchLines} vs ${mainLines} lines) — aborting merge`,
+          branchName,
+          mainLines,
+          branchLines,
+        });
+        registerEvent(id, 'MERGE_FAILED', {
+          reason: `regression_guard: branch HTML ${pct}% shorter than main (${branchLines} vs ${mainLines})`,
+          branch: branchName,
+        });
+        print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}branch HTML ${pct}% shorter than main (${branchLines} vs ${mainLines} lines)`);
+        print(`${B.vert}    ${C.yellow}⚠${C.reset}  Likely stale base — O'Brien may have overwritten features`);
+        return { success: false, sha: null, error: 'regression_guard' };
+      }
+    } catch (guardErr) {
+      // If the file doesn't exist on either branch, skip the guard (not a dashboard change).
+      log('info', 'merge', { id, msg: 'Regression guard skipped — file not found on one or both branches' });
+    }
+
     execSync(`git merge --no-ff ${branchName} -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
     const sha = execSync('git rev-parse HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
     try {
@@ -1458,63 +1508,72 @@ function poll() {
     return;
   }
 
+  // Scan both DONE and PENDING up front so counts are available for logging.
+  const doneFiles = files.filter(f => f.endsWith('-DONE.md')).sort();
   const pendingFiles = files
     .filter(f => f.endsWith('-PENDING.md'))
     .sort(); // lexicographic = numeric FIFO given zero-padded IDs
 
-  if (pendingFiles.length === 0) {
-    // Priority 2: DONE files needing evaluation.
-    const doneFiles = files.filter(f => f.endsWith('-DONE.md')).sort();
-    for (const doneFile of doneFiles) {
-      const doneId = doneFile.replace('-DONE.md', '');
-      const donePath = path.join(QUEUE_DIR, doneFile);
-      const briefPath = path.join(QUEUE_DIR, `${doneId}-BRIEF.md`);
+  // === Priority 1: Evaluate completed DONE files first ===
+  // This ensures each build merges to main BEFORE the next build starts,
+  // preventing branch divergence when multiple slices are approved in a burst.
+  for (const doneFile of doneFiles) {
+    const doneId = doneFile.replace('-DONE.md', '');
+    const donePath = path.join(QUEUE_DIR, doneFile);
+    const briefPath = path.join(QUEUE_DIR, `${doneId}-BRIEF.md`);
 
-      // Skip if BRIEF file not present (O'Brien may still be running).
-      if (!fs.existsSync(briefPath)) continue;
+    // Skip if BRIEF file not present (O'Brien may still be running).
+    if (!fs.existsSync(briefPath)) continue;
 
-      // Legacy: merge briefs (type: merge) are auto-accepted without claude -p.
-      // Deprecated: handleAccepted() now merges directly — no new merge briefs
-      // are generated. This block handles any legacy merge briefs still in the queue.
-      let briefMeta = {};
-      try {
-        briefMeta = parseFrontmatter(fs.readFileSync(briefPath, 'utf-8')) || {};
-      } catch (_) {}
+    // Legacy: merge briefs (type: merge) are auto-accepted without claude -p.
+    // Deprecated: handleAccepted() now merges directly — no new merge briefs
+    // are generated. This block handles any legacy merge briefs still in the queue.
+    let briefMeta = {};
+    try {
+      briefMeta = parseFrontmatter(fs.readFileSync(briefPath, 'utf-8')) || {};
+    } catch (_) {}
 
-      if (briefMeta.type === 'merge') {
-        log('info', 'evaluator', { id: doneId, msg: 'Legacy merge brief auto-accepted (deprecated path)' });
-        const acceptedPath = path.join(QUEUE_DIR, `${doneId}-ACCEPTED.md`);
-        try { fs.renameSync(donePath, acceptedPath); } catch (_) {}
-        registerEvent(doneId, 'ACCEPTED', { reason: 'auto-accepted merge', cycle: 0 });
-        callReviewAPI(doneId, 'ACCEPTED', 'auto-accepted merge');
-        print(`  ${C.green}${SYM.check}${C.reset} Brief ${doneId}${SYM.dash}Merge auto-accepted`);
-        continue;
-      }
-
-      // Skip if already reviewed.
-      if (hasReviewEvent(doneId)) continue;
-
-      // Rename DONE → EVALUATING to claim it.
-      const evaluatingPath = path.join(QUEUE_DIR, `${doneId}-EVALUATING.md`);
-      try {
-        fs.renameSync(donePath, evaluatingPath);
-        log('info', 'state', { id: doneId, from: 'DONE', to: 'EVALUATING' });
-      } catch (err) {
-        log('warn', 'evaluator', { id: doneId, msg: 'Failed to rename DONE to EVALUATING', error: err.message });
-        continue;
-      }
-
-      processing = true;
-      heartbeatState.status = 'evaluating';
-      heartbeatState.current_brief = doneId;
-      heartbeatState.current_brief_goal = briefMeta.goal || null;
-      heartbeatState.pickupTime = Date.now();
-      writeHeartbeat();
-
-      invokeEvaluator(doneId);
-      return;
+    if (briefMeta.type === 'merge') {
+      log('info', 'evaluator', { id: doneId, msg: 'Legacy merge brief auto-accepted (deprecated path)' });
+      const acceptedPath = path.join(QUEUE_DIR, `${doneId}-ACCEPTED.md`);
+      try { fs.renameSync(donePath, acceptedPath); } catch (_) {}
+      registerEvent(doneId, 'ACCEPTED', { reason: 'auto-accepted merge', cycle: 0 });
+      callReviewAPI(doneId, 'ACCEPTED', 'auto-accepted merge');
+      print(`  ${C.green}${SYM.check}${C.reset} Brief ${doneId}${SYM.dash}Merge auto-accepted`);
+      continue;
     }
 
+    // Skip if already reviewed.
+    if (hasReviewEvent(doneId)) continue;
+
+    // Rename DONE → EVALUATING to claim it.
+    const evaluatingPath = path.join(QUEUE_DIR, `${doneId}-EVALUATING.md`);
+    try {
+      fs.renameSync(donePath, evaluatingPath);
+      log('info', 'state', { id: doneId, from: 'DONE', to: 'EVALUATING' });
+    } catch (err) {
+      log('warn', 'evaluator', { id: doneId, msg: 'Failed to rename DONE to EVALUATING', error: err.message });
+      continue;
+    }
+
+    if (pendingFiles.length > 0) {
+      log('info', 'evaluator', { id: doneId, msg: `Evaluating DONE before ${pendingFiles.length} pending — merge-first priority` });
+      print(`${B.vert}  ${C.yellow}⚡${C.reset} ${pendingFiles.length} pending held — evaluating #${doneId} first (merge-first priority)`);
+    }
+
+    processing = true;
+    heartbeatState.status = 'evaluating';
+    heartbeatState.current_brief = doneId;
+    heartbeatState.current_brief_goal = briefMeta.goal || null;
+    heartbeatState.pickupTime = Date.now();
+    writeHeartbeat();
+
+    invokeEvaluator(doneId);
+    return;
+  }
+
+  // === Priority 2: Commission next PENDING (only if no DONE files to evaluate) ===
+  if (pendingFiles.length === 0) {
     idlePrintCounter += 1;
     if (idlePrintCounter >= 12) {
       idlePrintCounter = 0;
