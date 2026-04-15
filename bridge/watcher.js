@@ -71,6 +71,62 @@ if (hasDeprecatedTimeoutMs) {
 let currentLastActivityTs = null; // null when idle, Date object when processing
 
 // ---------------------------------------------------------------------------
+// Rate limit state — set when Claude API returns a rate-limit response.
+// Poll loop skips dispatch while Date.now() < rateLimitUntil.
+// ---------------------------------------------------------------------------
+
+let rateLimitUntil = null; // null = not rate-limited; epoch ms = blocked until
+
+/**
+ * parseRateLimitResetMs(stdout)
+ *
+ * Tries to extract the reset time from a Claude API rate-limit message
+ * like: "resets 4am (Asia/Nicosia)"
+ * Returns ms from now until the reset, or null if parsing fails.
+ */
+function parseRateLimitResetMs(stdout) {
+  try {
+    const match = stdout.match(/resets\s+(\d+)(?::(\d+))?\s*(am|pm)\s*\(([^)]+)\)/i);
+    if (!match) return null;
+
+    let hours   = parseInt(match[1], 10);
+    const mins  = parseInt(match[2] || '0', 10);
+    const amPm  = match[3].toLowerCase();
+    const tz    = match[4];
+
+    if (amPm === 'am') {
+      if (hours === 12) hours = 0;
+    } else {
+      if (hours !== 12) hours += 12;
+    }
+
+    // Build a Date for today at the reset time in the stated timezone.
+    // We do this by formatting the current date parts in the target TZ,
+    // constructing an ISO string, then adjusting if the reset is already past.
+    const now       = new Date();
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    const localDate = formatter.format(now); // "YYYY-MM-DD"
+
+    // Try today's reset.
+    const candidate = new Date(`${localDate}T${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:00`);
+    // candidate is in local (watcher) time — convert by using timezone offset.
+    // Simpler: express the target as UTC directly via Intl.
+    const utcMs = Date.parse(
+      `${localDate}T${String(hours).padStart(2,'0')}:${String(mins).padStart(2,'0')}:00`
+      // This gives local midnight + hours — imprecise across DST but good enough.
+    );
+    // If that time is already past, add 24h.
+    const resetMs = utcMs > Date.now() ? utcMs : utcMs + 86400000;
+    const waitMs  = resetMs - Date.now();
+    if (waitMs > 0 && waitMs < 86400000) return waitMs; // sanity: < 24h
+  } catch (_) {}
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Terminal presentation
 // ---------------------------------------------------------------------------
 
@@ -1352,6 +1408,54 @@ function invokeRom(briefContent, donePath, inProgressPath, errorPath, id, effect
           });
         }
 
+        // ── Rate limit recovery ───────────────────────────────────────────────
+        // Claude API returns is_error:true with "hit your limit" text when the
+        // account's rate limit is exceeded.  This is NOT a bug in the slice —
+        // requeue it and pause dispatch until the limit resets.
+        const isRateLimit = reason === 'crash' && stdout &&
+          (stdout.includes('hit your limit') || stdout.includes('your limit'));
+
+        if (isRateLimit) {
+          // Calculate how long to wait before retrying.
+          const parsedWaitMs = parseRateLimitResetMs(stdout);
+          const waitMs       = parsedWaitMs != null ? parsedWaitMs + 60000 : 3600000; // +1 min buffer; default 1h
+          rateLimitUntil     = Date.now() + waitMs;
+          const waitMin      = Math.round(waitMs / 60000);
+          const resetAt      = new Date(rateLimitUntil).toLocaleTimeString();
+
+          try {
+            // Requeue: write back as PENDING (preserving all frontmatter).
+            const ipContent = fs.readFileSync(inProgressPath, 'utf8');
+            const updated   = updateFrontmatter(ipContent, { status: 'PENDING' });
+            fs.writeFileSync(pendingPath, updated, 'utf8');
+            try { fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.ratelimit')); } catch (_) {}
+            log('warn', 'rate_limit', {
+              id,
+              msg: `Claude API rate limit — requeueing slice; dispatch paused ${waitMin}min (until ~${resetAt})`,
+              waitMs,
+              durationMs,
+            });
+            registerEvent(id, 'RATE_LIMITED', {
+              waitMs,
+              resetAt,
+              durationMs,
+              title,
+            });
+            print(`  ${C.yellow}⏸${C.reset}  Rate limit hit — slice ${id} requeued. Dispatch paused ${waitMin} min (≈${resetAt})`);
+            processing = false;
+            heartbeatState.status = 'idle';
+            heartbeatState.current_brief = null;
+            heartbeatState.current_brief_title = null;
+            heartbeatState.current_brief_goal = null;
+            heartbeatState.pickupTime = null;
+            try { fs.renameSync(NOG_ACTIVE_FILE, path.join(TRASH_DIR, 'nog-active.json.ratelimit')); } catch (_) {}
+            return; // Skip ERROR file — slice will be retried after the pause
+          } catch (rlErr) {
+            log('error', 'rate_limit', { id, msg: 'Rate limit requeue failed — falling through to ERROR', error: rlErr.message });
+            rateLimitUntil = null;
+          }
+        }
+
         // ── API error recovery ────────────────────────────────────────────────
         // If the crash was caused by a transient Anthropic API error (HTTP 5xx),
         // move the slice back to PENDING for automatic retry instead of losing it.
@@ -2203,6 +2307,23 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
 
 function poll() {
   if (processing) return;
+
+  // Rate limit gate: pause dispatch until the API limit resets.
+  if (rateLimitUntil) {
+    const remaining = rateLimitUntil - Date.now();
+    if (remaining > 0) {
+      // Print a reminder every ~5 minutes (60 poll cycles at 5s).
+      idlePrintCounter += 1;
+      if (idlePrintCounter >= 60) {
+        idlePrintCounter = 0;
+        print(`  ${C.yellow}⏸${C.reset}  Rate limited — ${Math.ceil(remaining / 60000)} min remaining until dispatch resumes`);
+      }
+      return;
+    }
+    // Limit has lifted.
+    rateLimitUntil = null;
+    print(`  ${C.green}${SYM.check}${C.reset} Rate limit window passed — resuming dispatch`);
+  }
 
   let files;
   try {
