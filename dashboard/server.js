@@ -459,7 +459,7 @@ const server = http.createServer(async (req, res) => {
         let content = fs.readFileSync(filePath, 'utf8');
         content = updateFrontmatter(content, { status: 'PENDING' });
         fs.writeFileSync(path.join(QUEUE_DIR, `${id}-PENDING.md`), content, 'utf8');
-        fs.unlinkSync(filePath);
+        try { fs.renameSync(filePath, path.join(TRASH_DIR, path.basename(filePath) + '.approved')); } catch (_) {}
         // Add to queue order (amendments go to front, others to end)
         const order = readQueueOrder();
         const fm2 = parseFrontmatter(content);
@@ -493,7 +493,7 @@ const server = http.createServer(async (req, res) => {
         // Rename to NEEDS_AMENDMENT if currently STAGED
         const destPath = path.join(STAGED_DIR, `${id}-NEEDS_AMENDMENT.md`);
         fs.writeFileSync(destPath, content, 'utf8');
-        if (filePath !== destPath) fs.unlinkSync(filePath);
+        if (filePath !== destPath) { try { fs.renameSync(filePath, path.join(TRASH_DIR, path.basename(filePath) + '.amended')); } catch (_) {} }
         writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'refined' });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -539,8 +539,7 @@ const server = http.createServer(async (req, res) => {
       try {
         let content = fs.readFileSync(filePath, 'utf8');
         content = updateFrontmatter(content, { status: 'REJECTED' });
-        fs.writeFileSync(path.join(TRASH_DIR, `${id}-REJECTED.md`), content, 'utf8');
-        fs.unlinkSync(filePath);
+        try { fs.renameSync(filePath, path.join(TRASH_DIR, `${id}-REJECTED.md`)); } catch (_) { fs.writeFileSync(path.join(TRASH_DIR, `${id}-REJECTED.md`), content, 'utf8'); }
         writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'rejected' });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -673,7 +672,7 @@ const server = http.createServer(async (req, res) => {
       let content = fs.readFileSync(pendingPath, 'utf8');
       content = updateFrontmatter(content, { status: 'STAGED' });
       fs.writeFileSync(path.join(STAGED_DIR, `${id}-STAGED.md`), content, 'utf8');
-      fs.unlinkSync(pendingPath);
+      try { fs.renameSync(pendingPath, path.join(TRASH_DIR, `${id}-PENDING.unaccepted`)); } catch (_) {}
       // Remove from queue order
       const order = readQueueOrder();
       const idx = order.indexOf(id);

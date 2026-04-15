@@ -373,7 +373,7 @@ function openBriefBlock(id, title, goal) {
   if (goal) {
     print(`${B.vert}    Goal: ${goal}`);
   }
-  print(`${B.vert}    Queued${SYM.arrow}Handed off to O'Brien`);
+  print(`${B.vert}    Queued${SYM.arrow}Handed off to Rom`);
   print(`${B.vert}`);
 }
 
@@ -401,7 +401,7 @@ function closeBriefBlock(success, durationMs, tokensIn, tokensOut, costUsd, reas
     const parts = [duration, tokenStr];
     if (costStr) parts.push(costStr);
     print(`${B.vert}    ${C.green}${SYM.check}${C.reset} Complete${SYM.sep}${parts.join(SYM.sep)}`);
-    print(`${B.vert}    Status: Done${SYM.arrow}Waiting for Kira's review`);
+    print(`${B.vert}    Status: Done${SYM.arrow}Waiting for Nog's review`);
   } else {
     const reasonStr = reason || 'Unknown error';
     print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} Failed${SYM.sep}${duration}${SYM.sep}Reason: ${reasonStr}`);
@@ -436,7 +436,7 @@ function log(level, event, fields) {
 //
 // One JSON line per event. The brief body is embedded in the COMMISSIONED
 // event so the original spec (with success criteria) is always recoverable.
-// Kira's evaluation task reads this file instead of hunting for renamed/deleted
+// Nog's evaluation task reads this file instead of hunting for renamed/deleted
 // queue files.
 // ---------------------------------------------------------------------------
 
@@ -582,7 +582,7 @@ let processing = false;
 let idlePrintCounter = 0;
 
 // ---------------------------------------------------------------------------
-// O'Brien invocation
+// Rom invocation
 // ---------------------------------------------------------------------------
 
 /**
@@ -592,10 +592,10 @@ let idlePrintCounter = 0;
  * On success: checks donePath exists; if not, writes a fallback ERROR report.
  * On failure: writes an ERROR report.
  * Always cleans up the IN_PROGRESS file on completion (existence-checked to
- * avoid ENOENT when O'Brien's crash recovery already handled it).
+ * avoid ENOENT when Rom's crash recovery already handled it).
  */
 function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal) {
-  // Ensure O'Brien starts from the latest main so the new branch includes all merged work.
+  // Ensure Rom starts from the latest main so the new branch includes all merged work.
   // Skip for amendments — they continue on the existing branch, not from main.
   const briefMeta = parseFrontmatter(briefContent) || {};
   const isAmendment = briefMeta.references && briefMeta.references !== 'null';
@@ -672,7 +672,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
     inactivityTimeoutMs: effectiveInactivityMs,
   });
 
-  // Progress tick: every 60s while O'Brien is running — stdout only, not bridge.log.
+  // Progress tick: every 60s while Rom is running — stdout only, not bridge.log.
   const tickInterval = setInterval(() => {
     printProgressTick(Date.now() - pickupTime);
   }, 60000);
@@ -701,7 +701,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
       const costUsd = computeCost(tokensIn, tokensOut);
 
       if (!err) {
-        // Success path: check O'Brien wrote his DONE file.
+        // Success path: check Rom wrote his DONE file.
         if (fs.existsSync(donePath)) {
           // --- Metrics validation gate (Bet 3) ---
           let doneMeta = null;
@@ -713,7 +713,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
           if (!metricsValid.ok) {
             log('warn', 'complete', {
               id,
-              msg: "O'Brien DONE file has incomplete metrics — writing ERROR (incomplete_metrics)",
+              msg: "Rom DONE file has incomplete metrics — writing ERROR (incomplete_metrics)",
               reason: 'incomplete_metrics',
               invalid: metricsValid.invalid,
               durationMs,
@@ -761,17 +761,17 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
               ts_result: null,
             });
 
-            log('info', 'complete', { id, msg: "O'Brien finished — DONE file present", durationMs, tokensIn, tokensOut });
+            log('info', 'complete', { id, msg: "Rom finished — DONE file present", durationMs, tokensIn, tokensOut });
             log('info', 'state', { id, from: 'IN_PROGRESS', to: 'DONE' });
             registerEvent(id, 'DONE', { durationMs, tokensIn, tokensOut, costUsd });
             closeBriefBlock(true, durationMs, tokensIn, tokensOut, costUsd, null);
             recordSessionResult(true, tokensIn, tokensOut, costUsd);
           }
         } else {
-          // O'Brien exited 0 but wrote no DONE file — write an ERROR report with reason "no_report".
+          // Rom exited 0 but wrote no DONE file — write an ERROR report with reason "no_report".
           log('warn', 'complete', {
             id,
-            msg: "O'Brien exited cleanly but wrote no DONE file — writing ERROR (no_report)",
+            msg: "Rom exited cleanly but wrote no DONE file — writing ERROR (no_report)",
             reason: 'no_report',
             durationMs,
           });
@@ -886,7 +886,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
 
       printSessionSummary();
 
-      // Archive the original brief so Kira's evaluation task can find the
+      // Archive the original brief so Nog's evaluation task can find the
       // success criteria.  Rename IN_PROGRESS → BRIEF (permanent archive).
       // The BRIEF suffix is inert — the poll loop only looks for PENDING files.
       const briefArchivePath = path.join(QUEUE_DIR, `${id}-BRIEF.md`);
@@ -1078,7 +1078,7 @@ function invokeEvaluator(id) {
     return;
   }
 
-  // Read EVALUATING file (O'Brien's DONE report).
+  // Read EVALUATING file (Rom's DONE report).
   let evaluatingContent;
   try {
     evaluatingContent = fs.readFileSync(evaluatingPath, 'utf-8');
@@ -1093,7 +1093,7 @@ function invokeEvaluator(id) {
     return;
   }
 
-  // Extract branch name from O'Brien's DONE report frontmatter.
+  // Extract branch name from Rom's DONE report frontmatter.
   const doneMeta = parseFrontmatter(evaluatingContent) || {};
   const branchName = doneMeta.branch || null;
 
@@ -1109,15 +1109,15 @@ function invokeEvaluator(id) {
   print(`${B.vert}`);
 
   const prompt = [
-    'You are Kira, Delivery Coordinator for Liberation of Bajor.',
+    'You are Nog, Evaluator for Liberation of Bajor.',
     '',
-    'Your job: evaluate whether O\'Brien\'s DONE report satisfies ALL acceptance criteria in the original brief. Be specific. If even one AC is not met, the verdict is AMENDMENT_NEEDED.',
+    'Your job: evaluate whether Rom\'s DONE report satisfies ALL acceptance criteria in the original brief. Be specific. If even one AC is not met, the verdict is AMENDMENT_NEEDED.',
     '',
     '## ORIGINAL BRIEF (contains the acceptance criteria):',
     '',
     briefContent,
     '',
-    '## O\'BRIEN\'S DONE REPORT:',
+    '## ROM\'S DONE REPORT:',
     '',
     evaluatingContent,
     '',
@@ -1254,7 +1254,7 @@ function mergeBranch(id, branchName, title) {
     execSync('git checkout main', { cwd: PROJECT_DIR, stdio: 'pipe' });
 
     // Regression guard: if the branch's dashboard HTML is significantly shorter
-    // than main's, O'Brien likely built on a stale base and is missing features.
+    // than main's, Rom likely built on a stale base and is missing features.
     try {
       const mainLines = parseInt(execSync(
         `git show main:dashboard/lcars-dashboard.html | wc -l`,
@@ -1279,7 +1279,7 @@ function mergeBranch(id, branchName, title) {
           branch: branchName,
         });
         print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}branch HTML ${pct}% shorter than main (${branchLines} vs ${mainLines} lines)`);
-        print(`${B.vert}    ${C.yellow}⚠${C.reset}  Likely stale base — O'Brien may have overwritten features`);
+        print(`${B.vert}    ${C.yellow}⚠${C.reset}  Likely stale base — Rom may have overwritten features`);
         return { success: false, sha: null, error: 'regression_guard' };
       }
     } catch (guardErr) {
@@ -1475,7 +1475,7 @@ function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) 
  * writeErrorFile(errorPath, id, reason, err, stdout, stderr)
  *
  * Writes a structured ERROR report. The frontmatter always includes `reason`
- * so bridge.log and Kira's tooling can distinguish failure modes:
+ * so bridge.log and Chief O'Brien's tooling can distinguish failure modes:
  *   "timeout"             — process was killed after exceeding the timeout
  *   "crash"               — process exited non-zero; exit_code included
  *   "no_report"           — process exited 0 but wrote no DONE file
@@ -1616,7 +1616,7 @@ function poll() {
     const donePath = path.join(QUEUE_DIR, doneFile);
     const briefPath = path.join(QUEUE_DIR, `${doneId}-BRIEF.md`);
 
-    // Skip if BRIEF file not present (O'Brien may still be running).
+    // Skip if BRIEF file not present (Rom may still be running).
     if (!fs.existsSync(briefPath)) continue;
 
     // Legacy: merge briefs (type: merge) are auto-accepted without claude -p.
@@ -1771,7 +1771,7 @@ function poll() {
 
   processing = true;
 
-  // Invoke O'Brien asynchronously — event loop stays live.
+  // Invoke Rom asynchronously — event loop stays live.
   invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal);
 }
 
@@ -1932,7 +1932,7 @@ function crashRecovery() {
  * Returns "001" if the directory is empty or unreadable.
  *
  * This function is purely computational — it does not write any files.
- * Exported so Kira can call it from bridge/next-id.js.
+ * Exported so the watcher can call it from bridge/next-id.js.
  */
 function nextBriefId(queueDir) {
   let files;

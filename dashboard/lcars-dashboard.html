@@ -1809,7 +1809,7 @@
         <div id="mission-active-content" style="display:none">
           <div id="mission-id-badge" class="active-brief-id"></div>
           <div id="pipeline-mission-title" class="active-brief-title"></div>
-          <div id="invocation-gap-indicator" style="display:none;color:#f59e42;font-size:0.82em;margin-top:4px">Invoking O'Brien — waiting for first response…</div>
+          <div id="invocation-gap-indicator" style="display:none;color:#f59e42;font-size:0.82em;margin-top:4px">Invoking Rom — waiting for first response…</div>
           <div id="pipeline-mission-goal" class="active-brief-stage" style="opacity:0.65;font-size:0.82em;margin-top:2px"></div>
           <div id="pipeline-mission-stage" class="active-brief-stage"></div>
         </div>
@@ -1834,7 +1834,7 @@
 
         <!-- Footer: builder + stop button (only during active) -->
         <div class="active-brief-footer" id="active-brief-footer" style="display:none">
-          <span class="active-brief-builder">O'Brien &middot; Backend Engineer</span>
+          <span class="active-brief-builder">Rom &middot; Backend Engineer</span>
           <button class="stop-build-btn" id="stop-build-btn" onclick="showStopConfirm()">&#9632; Stop Build</button>
         </div>
       </div>
@@ -1847,7 +1847,7 @@
         <div class="section-title">Post-Build Pipeline</div>
         <div class="postbuild-lane" id="nog-lane">
           <div class="postbuild-lane-header">
-            <span class="postbuild-lane-name">Nog &mdash; Code Review</span>
+            <span class="postbuild-lane-name">Nog &mdash; Evaluator</span>
             <span class="postbuild-badge" id="nog-badge">coming soon</span>
           </div>
           <div class="postbuild-lane-desc" id="nog-lane-desc">anti-patterns &middot; style &middot; linting &middot; conventions</div>
@@ -1911,16 +1911,16 @@
 
       <div class="crew-card active">
         <div class="crew-number">03</div>
-        <div class="crew-name">Kira</div>
-        <div class="crew-role">Delivery Lead</div>
+        <div class="crew-name">Chief O'Brien</div>
+        <div class="crew-role">Tech Lead</div>
         <span class="crew-badge badge-active">active</span>
-        <div class="crew-function">Breaks designs into slices, sequences the queue, and coordinates the pipeline.</div>
+        <div class="crew-function">Sequences the queue, directs delivery, writes briefs, and owns the dev process.</div>
       </div>
 
       <div class="crew-card active">
         <div class="crew-number">04</div>
-        <div class="crew-name">O'Brien</div>
-        <div class="crew-role">Backend Engineer</div>
+        <div class="crew-name">Rom</div>
+        <div class="crew-role">Backend Implementor</div>
         <span class="crew-badge badge-active">active</span>
         <div class="crew-function">Builds accepted features end-to-end. Owns the watcher, relay, and server.</div>
       </div>
@@ -1928,9 +1928,9 @@
       <div class="crew-card planned">
         <div class="crew-number">05</div>
         <div class="crew-name">Nog</div>
-        <div class="crew-role">Code Reviewer</div>
+        <div class="crew-role">Evaluator</div>
         <span class="crew-badge badge-planned">planned</span>
-        <div class="crew-function">Peer-reviews O'Brien's output before it ships. Flags anti-patterns, style issues, and lint failures.</div>
+        <div class="crew-function">Evaluates Rom's output against acceptance criteria before it ships.</div>
       </div>
 
       <div class="crew-card planned">
@@ -2005,7 +2005,7 @@
 <div class="stop-confirm-overlay" id="stop-confirm-overlay" style="display:none">
   <div class="stop-confirm-dialog">
     <div class="stop-confirm-title" id="stop-confirm-title">Stop build?</div>
-    <div class="stop-confirm-body" id="stop-confirm-body">O'Brien's current work will be preserved but the slice returns to pending.</div>
+    <div class="stop-confirm-body" id="stop-confirm-body">Rom's current work will be preserved but the slice returns to pending.</div>
     <div class="stop-confirm-actions">
       <button class="stop-confirm-btn stop-confirm-btn-cancel" onclick="hideStopConfirm()">Keep Building</button>
       <button class="stop-confirm-btn stop-confirm-btn-confirm" onclick="confirmStopBuild()">Confirm Stop</button>
@@ -2180,7 +2180,7 @@
         <div class="postbuild-lane-slice-title">${escHtml(title)}</div>
         <div class="postbuild-lane-round">Round ${round} of 5</div>
         <div class="postbuild-lane-timer-row">
-          <span class="postbuild-lane-identity">Nog &middot; Code Reviewer</span>
+          <span class="postbuild-lane-identity">Nog &middot; Evaluator</span>
           <span class="postbuild-lane-elapsed">
             <span class="postbuild-lane-elapsed-val" id="nog-elapsed-val">${formatNogElapsed()}</span>
             <span class="postbuild-lane-elapsed-label">elapsed</span>
@@ -2361,7 +2361,7 @@
     const titleEl = document.getElementById('stop-confirm-title');
     const bodyEl  = document.getElementById('stop-confirm-body');
     titleEl.textContent = `Stop #${currentMission.id} \u2014 ${currentMission.title || 'Untitled'}?`;
-    bodyEl.textContent  = "O'Brien's current work will be preserved but the slice returns to pending.";
+    bodyEl.textContent  = "Rom's current work will be preserved but the slice returns to pending.";
     overlay.style.display = '';
   }
 
