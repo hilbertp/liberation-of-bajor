@@ -1,5 +1,5 @@
 {
-  "ts": "2026-04-15T21:19:54.017Z",
+  "ts": "2026-04-15T21:35:04.100Z",
   "status": "idle",
   "current_slice": null,
   "current_slice_title": null,
@@ -8,7 +8,7 @@
   "last_activity_ts": null,
   "processed_total": 0,
   "queue": {
-    "waiting": 1,
+    "waiting": 0,
     "active": 0,
     "done": 13,
     "error": 6
