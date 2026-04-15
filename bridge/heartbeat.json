@@ -1,16 +1,16 @@
 {
-  "ts": "2026-04-15T21:35:04.100Z",
+  "ts": "2026-04-15T21:05:31.228Z",
   "status": "idle",
-  "current_slice": null,
-  "current_slice_title": null,
-  "current_slice_goal": null,
-  "slice_elapsed_seconds": null,
+  "current_brief": null,
+  "current_brief_title": null,
+  "current_brief_goal": null,
+  "brief_elapsed_seconds": null,
   "last_activity_ts": null,
-  "processed_total": 0,
+  "processed_total": 356,
   "queue": {
     "waiting": 0,
     "active": 0,
-    "done": 13,
-    "error": 6
+    "done": 12,
+    "error": 5
   }
 }
