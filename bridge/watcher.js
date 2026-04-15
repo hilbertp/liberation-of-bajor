@@ -50,9 +50,11 @@ const HEARTBEAT_FILE = path.resolve(__dirname, config.heartbeatFile);
 const PROJECT_DIR    = path.resolve(__dirname, config.projectDir);
 const REGISTER_FILE  = path.resolve(__dirname, 'register.jsonl');
 const NOG_ACTIVE_FILE = path.resolve(__dirname, 'nog-active.json');
+const TRASH_DIR      = path.resolve(QUEUE_DIR, '..', 'trash');
 
-// Ensure queue directory exists.
+// Ensure queue + trash directories exist.
 fs.mkdirSync(QUEUE_DIR, { recursive: true });
+fs.mkdirSync(TRASH_DIR, { recursive: true });
 
 // Deprecation check: timeoutMs was the old wall-clock timeout. It is now ignored.
 // Log once at startup if found in the config file.
@@ -62,7 +64,7 @@ if (hasDeprecatedTimeoutMs) {
 }
 
 // ---------------------------------------------------------------------------
-// Activity tracking — updated by invokeOBrien when child process produces output.
+// Activity tracking — updated by invokeRom when child process produces output.
 // Exposed at module level so writeHeartbeat can include last_activity_ts.
 // ---------------------------------------------------------------------------
 
@@ -627,8 +629,7 @@ function fuseSafeCheckoutMain(id) {
   }
 
   // Step 3: overwrite each differing file on disk with main's version.
-  const trashDir = path.join(QUEUE_DIR, '..', 'trash');
-  fs.mkdirSync(trashDir, { recursive: true });
+  // TRASH_DIR is a global constant initialized at startup.
   let overwritten = 0;
   let removed = 0;
 
@@ -645,7 +646,7 @@ function fuseSafeCheckoutMain(id) {
       // File doesn't exist on main — it only exists on the current branch.
       // Rename to trash (FUSE-safe) so the working tree matches main.
       try {
-        fs.renameSync(diskPath, path.join(trashDir, path.basename(file) + '.branch-cleanup'));
+        fs.renameSync(diskPath, path.join(TRASH_DIR, path.basename(file) + '.branch-cleanup'));
         removed++;
       } catch (__) {
         // If even rename fails, just leave it — it'll be untracked on main.
@@ -688,6 +689,176 @@ function fuseSafeCheckoutMain(id) {
     filesRemoved: removed,
     totalDiff: diffFiles.length,
   });
+}
+
+/**
+ * fuseSafeCheckoutBranch(id, branchName)
+ *
+ * FUSE-safe checkout to an EXISTING feature branch.
+ * Same strategy as fuseSafeCheckoutMain but targets a named branch.
+ * Used for amendment flows where the watcher needs to resume work on
+ * a branch after a restart (when HEAD may have returned to main).
+ *
+ * Steps:
+ *   1. Auto-commit dirty tracked files.
+ *   2. Diff current HEAD vs target branch.
+ *   3. Overwrite each differing file via writeFileSync (truncate-in-place).
+ *   4. Move HEAD to target branch via symbolic-ref + read-tree.
+ *   5. Verify HEAD.
+ */
+function fuseSafeCheckoutBranch(id, branchName) {
+  branchName = sanitizeBranchName(branchName);
+
+  const current = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  if (current === branchName) {
+    log('info', 'git_safety', { id, msg: `Already on branch ${branchName} — no checkout needed` });
+    return;
+  }
+
+  // Verify the branch exists
+  try {
+    execSync(`git rev-parse --verify refs/heads/${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+  } catch (_) {
+    throw new Error(`fuseSafeCheckoutBranch: branch ${branchName} does not exist`);
+  }
+
+  // Step 1: commit anything dirty
+  autoCommitDirtyTree(`pre-checkout-branch-${branchName}`);
+
+  // Step 2: diff files between current HEAD and the target branch
+  const diffRaw = execSync(`git diff --name-only HEAD ${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  const diffFiles = diffRaw ? diffRaw.split('\n').filter(Boolean) : [];
+
+  // Step 3: overwrite each file from the target branch
+  let overwritten = 0;
+  let removed = 0;
+  for (const file of diffFiles) {
+    const diskPath = path.join(PROJECT_DIR, file);
+    try {
+      const content = execSync(`git show ${branchName}:${file}`, { cwd: PROJECT_DIR, encoding: 'buffer' });
+      const dir = path.dirname(diskPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(diskPath, content);
+      overwritten++;
+    } catch (_) {
+      // File doesn't exist on target branch — move to trash
+      if (fs.existsSync(diskPath)) {
+        try { fs.renameSync(diskPath, path.join(TRASH_DIR, path.basename(file) + '.branch-checkout')); } catch (__) {}
+        removed++;
+      }
+    }
+  }
+
+  // Step 4: move HEAD pointer
+  execSync(`git symbolic-ref HEAD refs/heads/${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+  execSync(`git read-tree ${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+
+  // Step 5: verify
+  const verify = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  if (verify !== branchName) {
+    throw new Error(`fuseSafeCheckoutBranch: HEAD is ${verify}, expected ${branchName}`);
+  }
+
+  log('info', 'git_safety', {
+    id,
+    msg: `FUSE-safe checkout to branch ${branchName} complete (was: ${current})`,
+    filesOverwritten: overwritten,
+    filesRemoved: removed,
+    totalDiff: diffFiles.length,
+  });
+}
+
+/**
+ * createBranchFromMain(id, branchName)
+ *
+ * Watcher-owned branch creation. Creates a new branch from main HEAD.
+ * Since we're branching from the currently checked-out main, no files
+ * change on disk — this is inherently FUSE-safe (just pointer creation).
+ *
+ * Pre-condition: HEAD must be on main (call fuseSafeCheckoutMain first).
+ */
+function createBranchFromMain(id, branchName) {
+  branchName = sanitizeBranchName(branchName);
+
+  // Verify we're on main
+  const current = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  if (current !== 'main') {
+    throw new Error(`createBranchFromMain: expected HEAD on main, got ${current}`);
+  }
+
+  // Check if branch already exists
+  try {
+    execSync(`git rev-parse --verify refs/heads/${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    // Branch exists — just check it out
+    log('info', 'git_safety', { id, msg: `Branch ${branchName} already exists — checking out` });
+    fuseSafeCheckoutBranch(id, branchName);
+    return;
+  } catch (_) {
+    // Branch doesn't exist — good, create it
+  }
+
+  // Create branch (just moves pointer, no file changes since we're on main)
+  execSync(`git checkout -b ${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+
+  // Verify
+  const verify = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  if (verify !== branchName) {
+    throw new Error(`createBranchFromMain: HEAD is ${verify}, expected ${branchName}`);
+  }
+
+  log('info', 'git_safety', { id, msg: `Created branch ${branchName} from main`, sha: execSync('git rev-parse HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim() });
+}
+
+/**
+ * verifyBranchState(id, expectedBranch)
+ *
+ * Post-invocation gate. Verifies that:
+ *   1. HEAD is on the expected branch (not main, not detached).
+ *   2. The branch has commits ahead of main (Rom actually did work).
+ *   3. The branch's base is reachable from main (not forked from stale state).
+ *
+ * Returns { ok, issues[] }.
+ */
+function verifyBranchState(id, expectedBranch) {
+  const issues = [];
+
+  // Check 1: correct branch
+  const current = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  if (current !== expectedBranch) {
+    issues.push(`HEAD is on '${current}', expected '${expectedBranch}'`);
+  }
+
+  // Check 2: commits ahead of main
+  try {
+    const ahead = execSync(`git rev-list main..${expectedBranch} --count`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    if (parseInt(ahead, 10) === 0) {
+      issues.push(`Branch ${expectedBranch} has no commits ahead of main`);
+    }
+  } catch (_) {
+    issues.push(`Could not count commits ahead of main for ${expectedBranch}`);
+  }
+
+  // Check 3: merge-base is on main (branch forked from main, not from some other branch)
+  try {
+    const mergeBase = execSync(`git merge-base main ${expectedBranch}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const mainTip   = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    // The merge-base should be the main tip at branch creation time.
+    // Verify it's reachable from main.
+    const isOnMain = execSync(`git branch --contains ${mergeBase}`, { cwd: PROJECT_DIR, encoding: 'utf-8' });
+    if (!isOnMain.includes('main')) {
+      issues.push(`Branch merge-base ${mergeBase.slice(0,8)} is not on main — possible stale fork`);
+    }
+  } catch (_) {
+    issues.push('Could not verify merge-base');
+  }
+
+  const ok = issues.length === 0;
+  if (!ok) {
+    log('warn', 'git_safety', { id, msg: 'Post-invocation branch verification failed', issues });
+  } else {
+    log('info', 'git_safety', { id, msg: `Post-invocation branch verification passed for ${expectedBranch}` });
+  }
+  return { ok, issues };
 }
 
 /**
@@ -737,8 +908,7 @@ function verifyWorkingTreeMatchesMain(id, context) {
         fs.writeFileSync(diskPath, content);
       } catch (_) {
         // File was deleted in git — rename to trash
-        const trashDir = path.join(QUEUE_DIR, '..', 'trash');
-        try { fs.renameSync(diskPath, path.join(trashDir, path.basename(file) + '.verify-cleanup')); } catch (__) {}
+        try { fs.renameSync(diskPath, path.join(TRASH_DIR, path.basename(file) + '.verify-cleanup')); } catch (__) {}
       }
     }
   } catch (err) {
@@ -805,7 +975,7 @@ let idlePrintCounter = 0;
 // ---------------------------------------------------------------------------
 
 /**
- * invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs)
+ * invokeRom(briefContent, donePath, inProgressPath, errorPath, id, effectiveTimeoutMs)
  *
  * Pipes brief content + report path instruction to `claude -p`.
  * On success: checks donePath exists; if not, writes a fallback ERROR report.
@@ -813,20 +983,63 @@ let idlePrintCounter = 0;
  * Always cleans up the IN_PROGRESS file on completion (existence-checked to
  * avoid ENOENT when Rom's crash recovery already handled it).
  */
-function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal) {
-  // Ensure Rom starts from the latest main so the new branch includes all merged work.
-  // Skip for amendments — they continue on the existing branch, not from main.
+function invokeRom(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal) {
+  // ── WATCHER-OWNED BRANCH LIFECYCLE ─────────────────────────────────────
+  // The watcher OWNS all branching. Rom never creates, checks out, or manages
+  // branches. This is the rigid pipeline gate that prevents prompt-quality
+  // failures from corrupting git state.
+  //
+  // New slices:  main → create slice/{id} branch → invoke Rom on that branch
+  // Amendments:  checkout existing branch → invoke Rom on that branch
+  // ──────────────────────────────────────────────────────────────────────────
   const briefMeta = parseFrontmatter(briefContent) || {};
   const isAmendment = briefMeta.references && briefMeta.references !== 'null';
+  const sliceBranch = isAmendment
+    ? (briefMeta.branch || `slice/${briefMeta.root_commission_id || id}`)
+    : `slice/${id}`;
+
   if (!isAmendment) {
+    // NEW SLICE: checkout main → create branch → verify
     try {
       fuseSafeCheckoutMain(id);
-      log('info', 'branch', { id, msg: 'FUSE-safe checkout to main before Rom invocation' });
+      createBranchFromMain(id, sliceBranch);
+      log('info', 'branch', { id, msg: `Watcher created branch ${sliceBranch} from main` });
     } catch (err) {
-      log('error', 'branch', { id, msg: 'fuseSafeCheckoutMain failed — proceeding on current HEAD', error: err.message });
+      log('error', 'branch', { id, msg: `Failed to create branch ${sliceBranch} — aborting invocation`, error: err.message });
+      // Write ERROR — don't invoke Rom on unknown git state
+      const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
+      writeErrorFile(errorPath2, id, 'branch_creation_failed', err, '', '', {});
+      log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'branch_creation_failed' });
+      registerEvent(id, 'ERROR', { reason: 'branch_creation_failed', error: err.message });
+      processing = false;
+      heartbeatState.status = 'idle';
+      heartbeatState.current_brief = null;
+      heartbeatState.current_brief_title = null;
+      heartbeatState.current_brief_goal = null;
+      heartbeatState.pickupTime = null;
+      writeHeartbeat();
+      return;
     }
   } else {
-    log('info', 'branch', { id, msg: 'Amendment brief — skipping checkout main (staying on current branch)' });
+    // AMENDMENT: checkout existing feature branch
+    try {
+      fuseSafeCheckoutBranch(id, sliceBranch);
+      log('info', 'branch', { id, msg: `Watcher checked out amendment branch ${sliceBranch}` });
+    } catch (err) {
+      log('error', 'branch', { id, msg: `Failed to checkout amendment branch ${sliceBranch} — aborting`, error: err.message });
+      const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
+      writeErrorFile(errorPath2, id, 'amendment_branch_checkout_failed', err, '', '', {});
+      log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'amendment_branch_checkout_failed' });
+      registerEvent(id, 'ERROR', { reason: 'amendment_branch_checkout_failed', error: err.message });
+      processing = false;
+      heartbeatState.status = 'idle';
+      heartbeatState.current_brief = null;
+      heartbeatState.current_brief_title = null;
+      heartbeatState.current_brief_goal = null;
+      heartbeatState.pickupTime = null;
+      writeHeartbeat();
+      return;
+    }
   }
 
   const doneTemplate = [
@@ -841,11 +1054,11 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
     '---',
     'id: "' + id + '"',
     'title: "(brief title)"',
-    'from: obrien',
-    'to: kira',
+    'from: rom',
+    'to: nog',
     'status: DONE',
     'brief_id: "' + id + '"',
-    'branch: "(your working branch name)"',
+    'branch: "' + sliceBranch + '"',
     'completed: "' + new Date().toISOString() + '"',
     'tokens_in: 0',
     'tokens_out: 0',
@@ -919,6 +1132,31 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
       const { tokensIn, tokensOut } = extractTokenUsage(stdout || '');
       const costUsd = computeCost(tokensIn, tokensOut);
 
+      // ── POST-INVOCATION BRANCH VERIFICATION ─────────────────────────────
+      // The watcher verifies that commits are on the expected branch.
+      // This catches prompt-quality failures where Rom might have switched
+      // branches, detached HEAD, or committed to main directly.
+      try {
+        const branchCheck = verifyBranchState(id, sliceBranch);
+        if (!branchCheck.ok) {
+          log('warn', 'git_safety', {
+            id,
+            msg: `Post-invocation branch check: ${branchCheck.issues.length} issue(s) — will attempt recovery`,
+            issues: branchCheck.issues,
+            branch: sliceBranch,
+          });
+          // Recovery: if HEAD moved to wrong branch, try to get back
+          const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+          if (currentBranch !== sliceBranch && currentBranch !== 'HEAD') {
+            log('warn', 'git_safety', { id, msg: `HEAD on ${currentBranch} instead of ${sliceBranch} — auto-committing and noting discrepancy` });
+            autoCommitDirtyTree(`post-invocation-recovery-${id}`);
+          }
+        }
+      } catch (verifyErr) {
+        log('warn', 'git_safety', { id, msg: 'Post-invocation branch verification error (non-fatal)', error: verifyErr.message });
+      }
+      // ────────────────────────────────────────────────────────────────────
+
       if (!err) {
         // Success path: check Rom wrote his DONE file.
         if (fs.existsSync(donePath)) {
@@ -955,7 +1193,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
             // timesheet write point 1 — append watcher row at DONE
             appendTimesheet({
               ts: new Date(pickupTime).toISOString(),
-              role: 'obrien',
+              role: 'rom',
               source: 'watcher',
               commission_id: String(id),
               title: (briefMeta.title || title || '').replace(/^["']|["']$/g, ''),
@@ -1063,8 +1301,8 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
               });
               fs.writeFileSync(pendingPath, updated, 'utf8');
               // inProgressPath will be cleaned up below (renamed → BRIEF via normal flow
-              // won't happen since we're returning early; delete it explicitly)
-              try { fs.unlinkSync(inProgressPath); } catch (_) {}
+              // won't happen since we're returning early; move to trash explicitly)
+              try { fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.api-retry')); } catch (_) {}
               log('warn', 'api_retry', {
                 id,
                 msg: `Anthropic API error — requeueing for retry (attempt ${retryCount + 1}/${MAX_API_RETRIES})`,
@@ -1083,7 +1321,7 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
               heartbeatState.current_brief_title = null;
               heartbeatState.current_brief_goal = null;
               heartbeatState.pickupTime = null;
-              try { fs.unlinkSync(NOG_ACTIVE_FILE); } catch (_) {}
+              try { fs.renameSync(NOG_ACTIVE_FILE, path.join(TRASH_DIR, 'nog-active.json.api-retry')); } catch (_) {}
               return; // Skip ERROR file — slice will be retried
             } catch (retryErr) {
               log('error', 'api_retry', { id, msg: 'Retry requeue failed, falling through to ERROR', error: retryErr.message });
@@ -1115,8 +1353,8 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
           log('info', 'state', { id, msg: 'Archived brief', from: 'IN_PROGRESS', to: 'BRIEF' });
         } catch (archiveErr) {
           // Fallback: if rename fails, try to delete so the queue doesn't jam.
-          log('warn', 'error', { id, msg: 'Failed to archive IN_PROGRESS file, deleting instead', error: archiveErr.message });
-          try { fs.unlinkSync(inProgressPath); } catch (_) {}
+          log('warn', 'error', { id, msg: 'Failed to archive IN_PROGRESS file, trashing instead', error: archiveErr.message });
+          try { fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.archive-fail')); } catch (_) {}
         }
       }
 
@@ -1349,7 +1587,7 @@ function invokeEvaluator(id) {
     '  "verdict": "ACCEPTED" or "AMENDMENT_NEEDED",',
     '  "reason": "One paragraph explaining your decision. Reference specific ACs.",',
     '  "failed_criteria": ["list of specific ACs that were not met, empty if ACCEPTED"],',
-    '  "amendment_instructions": "If AMENDMENT_NEEDED: specific instructions for O\'Brien to fix each failed criterion. Reference file paths and expected changes. If ACCEPTED: empty string."',
+    '  "amendment_instructions": "If AMENDMENT_NEEDED: specific instructions for Rom to fix each failed criterion. Reference file paths and expected changes. If ACCEPTED: empty string."',
     '}',
   ].join('\n');
 
@@ -1382,7 +1620,7 @@ function invokeEvaluator(id) {
     (err, stdout, stderr) => {
       clearInterval(tickInterval);
       // Clean up nog-active.json — Nog is done.
-      try { fs.unlinkSync(NOG_ACTIVE_FILE); } catch (_) {}
+      try { fs.renameSync(NOG_ACTIVE_FILE, path.join(TRASH_DIR, 'nog-active.json.done')); } catch (_) {}
       const durationMs = Date.now() - pickupTime;
 
       let verdict = null;
@@ -1482,38 +1720,57 @@ function mergeBranch(id, branchName, title) {
     fuseSafeCheckoutMain(id);
 
     // ── Regression guard ────────────────────────────────────────────────
-    // If the branch's dashboard HTML is significantly shorter than main's,
-    // Rom likely built on a stale base and is missing features.
+    // Check ALL files changed by the branch for size regressions.
+    // If any file on the branch is significantly shorter than main's version
+    // (>15% shrinkage for files >50 lines), the merge is blocked.
+    // This catches stale-base builds and truncation damage.
     try {
-      const mainLines = parseInt(execSync(
-        `git show main:dashboard/lcars-dashboard.html | wc -l`,
-        { cwd: PROJECT_DIR, encoding: 'utf-8' }
-      ).trim(), 10);
-      const branchLines = parseInt(execSync(
-        `git show ${branchName}:dashboard/lcars-dashboard.html | wc -l`,
-        { cwd: PROJECT_DIR, encoding: 'utf-8' }
-      ).trim(), 10);
+      const changedFiles = execSync(`git diff --name-only main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+      if (changedFiles) {
+        const regressions = [];
+        for (const file of changedFiles.split('\n').filter(Boolean)) {
+          try {
+            const mainLines = parseInt(execSync(
+              `git show main:${file} | wc -l`,
+              { cwd: PROJECT_DIR, encoding: 'utf-8' }
+            ).trim(), 10);
+            const branchLines = parseInt(execSync(
+              `git show ${branchName}:${file} | wc -l`,
+              { cwd: PROJECT_DIR, encoding: 'utf-8' }
+            ).trim(), 10);
 
-      if (mainLines > 0 && branchLines < mainLines * 0.85) {
-        const pct = Math.round((1 - branchLines / mainLines) * 100);
-        log('warn', 'merge', {
-          id,
-          msg: `Regression guard: branch HTML is ${pct}% shorter than main (${branchLines} vs ${mainLines} lines) — aborting merge`,
-          branchName,
-          mainLines,
-          branchLines,
-        });
-        registerEvent(id, 'MERGE_FAILED', {
-          reason: `regression_guard: branch HTML ${pct}% shorter than main (${branchLines} vs ${mainLines})`,
-          branch: branchName,
-        });
-        print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}branch HTML ${pct}% shorter than main (${branchLines} vs ${mainLines} lines)`);
-        print(`${B.vert}    ${C.yellow}⚠${C.reset}  Likely stale base — Rom may have overwritten features`);
-        return { success: false, sha: null, error: 'regression_guard' };
+            // Only check files that are substantial (>50 lines on main)
+            if (mainLines > 50 && branchLines < mainLines * 0.85) {
+              const pct = Math.round((1 - branchLines / mainLines) * 100);
+              regressions.push({ file, mainLines, branchLines, pct });
+            }
+          } catch (_) {
+            // File is new or deleted — not a regression
+          }
+        }
+
+        if (regressions.length > 0) {
+          const summary = regressions.map(r => `${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines})`).join('; ');
+          log('warn', 'merge', {
+            id,
+            msg: `Regression guard: ${regressions.length} file(s) significantly shorter on branch — aborting merge`,
+            branchName,
+            regressions,
+          });
+          registerEvent(id, 'MERGE_FAILED', {
+            reason: `regression_guard: ${regressions.length} file(s) shrunk: ${summary}`,
+            branch: branchName,
+          });
+          print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}${regressions.length} file(s) regressed on branch`);
+          for (const r of regressions) {
+            print(`${B.vert}    ${C.yellow}⚠${C.reset}  ${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines} lines)`);
+          }
+          print(`${B.vert}    ${C.yellow}⚠${C.reset}  Likely stale base — Rom may have overwritten features`);
+          return { success: false, sha: null, error: 'regression_guard' };
+        }
       }
     } catch (guardErr) {
-      // If the file doesn't exist on either branch, skip the guard (not a dashboard change).
-      log('info', 'merge', { id, msg: 'Regression guard skipped — file not found on one or both branches' });
+      log('info', 'merge', { id, msg: 'Regression guard skipped — diff failed', error: guardErr.message });
     }
 
     // ── Merge ───────────────────────────────────────────────────────────
@@ -1622,8 +1879,8 @@ function handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructio
     `id: "${nextId}"`,
     `title: "Amendment ${cycle + 1} — fix failed criteria for brief ${rootId}"`,
     `goal: "All acceptance criteria from brief ${rootId} are met on branch ${branchName || '(original branch)'}."`,
-    'from: kira',
-    'to: obrien',
+    'from: nog',
+    'to: rom',
     'priority: normal',
     `created: "${new Date().toISOString()}"`,
     `references: "${id}"`,
@@ -1636,7 +1893,9 @@ function handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructio
     '',
     '## Objective',
     '',
-    `This is an amendment to brief ${rootId} (cycle ${cycle + 1} of 5). Continue working on branch \`${branchName || '(see frontmatter branch field)'}\`. Do NOT create a new branch.`,
+    `This is an amendment to brief ${rootId} (cycle ${cycle + 1} of 5).`,
+    '',
+    '**IMPORTANT: The watcher handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
     '',
     '## Failed criteria',
     '',
@@ -1652,7 +1911,8 @@ function handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructio
     '',
     '## Constraints',
     '',
-    `Stay on branch \`${branchName || '(see frontmatter)'}\`. Do not create a new branch.`,
+    '- Do NOT create, checkout, or switch branches. The watcher manages the branch lifecycle.',
+    '- Commit your changes to the current branch only.',
     '',
     '## Success criteria',
     '',
@@ -1735,7 +1995,7 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
     `id: "${id}"`,
     `title: "Slice ${id} — ${reason}"`,
     'from: watcher',
-    'to: kira',
+    'to: chiefobrien',
     'status: ERROR',
     `brief_id: "${id}"`,
     `completed: "${completed}"`,
@@ -1984,7 +2244,7 @@ function poll() {
     registerEvent(errId, 'ERROR', { reason: 'invalid_brief', missingFields });
 
     // Remove the invalid PENDING file so it doesn't loop indefinitely.
-    try { fs.unlinkSync(pendingPath); } catch (_) {}
+    try { fs.renameSync(pendingPath, path.join(TRASH_DIR, path.basename(pendingPath) + '.invalid')); } catch (_) {}
 
     return; // Continue poll loop on next tick.
   }
@@ -2008,7 +2268,7 @@ function poll() {
   processing = true;
 
   // Invoke Rom asynchronously — event loop stays live.
-  invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal);
+  invokeRom(briefContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal);
 }
 
 // ---------------------------------------------------------------------------
@@ -2125,11 +2385,11 @@ function crashRecovery() {
       // Brief already resolved — the IN_PROGRESS file is a stale artifact.
       const resolvedAs = hasDone ? 'DONE' : hasError ? 'ERROR' : hasAccepted ? 'ACCEPTED' : 'BRIEF';
       try {
-        fs.unlinkSync(inProgressPath);
+        fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.orphan'));
         log('info', 'startup_recovery', {
           id,
-          msg: `Orphaned IN_PROGRESS deleted (${resolvedAs} present)`,
-          action: 'deleted',
+          msg: `Orphaned IN_PROGRESS trashed (${resolvedAs} present)`,
+          action: 'trashed',
           resolved_as: resolvedAs,
         });
         actions.push({ id, type: hasDone ? 'cleared' : hasAccepted ? 'cleared_accepted' : hasBrief ? 'cleared_brief' : 'cleared_error' });
