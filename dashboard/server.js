@@ -613,14 +613,15 @@ const server = http.createServer(async (req, res) => {
   const queueContentMatch = pathname.match(/^\/api\/queue\/(\d+)\/content$/);
   if (queueContentMatch && req.method === 'GET') {
     const id = queueContentMatch[1];
-    // Search order: ACCEPTED, DONE, PENDING, BRIEF (queue dir), then staged
+    // BRIEF.md is the original prompt given to O'Brien — show it first.
+    // Fall back to PENDING (same content, still in queue) then STAGED, then DONE report.
     const candidates = [
-      path.join(QUEUE_DIR, `${id}-ACCEPTED.md`),
-      path.join(QUEUE_DIR, `${id}-DONE.md`),
-      path.join(QUEUE_DIR, `${id}-PENDING.md`),
       path.join(QUEUE_DIR, `${id}-BRIEF.md`),
+      path.join(QUEUE_DIR, `${id}-PENDING.md`),
       path.join(STAGED_DIR, `${id}-STAGED.md`),
       path.join(STAGED_DIR, `${id}-NEEDS_AMENDMENT.md`),
+      path.join(QUEUE_DIR, `${id}-ACCEPTED.md`),
+      path.join(QUEUE_DIR, `${id}-DONE.md`),
     ];
     let found = null;
     for (const p of candidates) {

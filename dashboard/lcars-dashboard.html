@@ -106,7 +106,8 @@
     width: 6px; height: 6px; border-radius: 50%;
     background: currentColor; flex-shrink: 0;
   }
-  .health-pill-waveform { font-size: 9px; opacity: 0.6; letter-spacing: -1px; }
+  .health-pill-waveform { font-size: 9px; opacity: 0.6; letter-spacing: -1px; display: none; }
+  .health-pill:hover .health-pill-waveform { display: inline; }
   .health-pill-tooltip {
     display: none;
     position: absolute;
@@ -1810,7 +1811,7 @@
     <!-- HISTORY -->
     <div class="panel-history">
       <div class="brief-history" style="margin-bottom:0">
-        <div class="section-title">History &darr; newest first</div>
+        <div class="section-title">History</div>
         <div class="history-list" id="history-list">
         </div>
       </div>
