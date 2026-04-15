@@ -1694,9 +1694,78 @@
   /* ── UTILITY (referenced by JS) ────────────────────────── */
   .blink { }
   .section-label { font-size: 13px; font-weight: 600; color: #111827; margin-bottom: 16px; }
+
+  /* ── API RETRY TOAST ────────────────────────────────────── */
+  #api-retry-toasts {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+  .api-retry-toast {
+    pointer-events: all;
+    background: #fff;
+    border: 1px solid #f59e0b;
+    border-left: 4px solid #f59e0b;
+    border-radius: 8px;
+    padding: 12px 16px;
+    max-width: 360px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    animation: toast-in 0.25s ease;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .api-retry-toast.toast-out {
+    animation: toast-out 0.3s ease forwards;
+  }
+  .api-retry-toast-title {
+    font-weight: 600;
+    color: #92400e;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .api-retry-toast-body {
+    color: #374151;
+  }
+  .api-retry-toast-dismiss {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #9ca3af;
+    cursor: pointer;
+    text-decoration: underline;
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  .api-retry-toast-dismiss:hover { color: #374151; }
+  @keyframes toast-in  { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } }
+  @keyframes toast-out { from { opacity:1; transform:translateX(0); } to { opacity:0; transform:translateX(20px); } }
+
+  /* ── RETRY BADGE on queue items ─────────────────────────── */
+  .queue-retry-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #92400e;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    padding: 1px 6px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
 </style>
 </head>
 <body>
+<div id="api-retry-toasts"></div>
 
 <div class="dashboard-container">
 
@@ -2330,9 +2399,65 @@
     // Nog active state
     updateNogLane(data.nogActive ?? null);
 
+    // API retry toasts
+    processApiRetries(data.apiRetries ?? []);
+
     // Pipeline
     updatePipelineUI(data);
   }
+
+  // ── API Retry Toast system ────────────────────────────────────────────────
+  // Tracks the most recent API_RETRY event timestamp we've shown a toast for.
+  // Stored as ISO string; persists only for this browser session.
+  let lastApiRetryTs = sessionStorage.getItem('lastApiRetryTs') || '';
+
+  function showApiRetryToast(ev) {
+    const container = document.getElementById('api-retry-toasts');
+    if (!container) return;
+
+    const attempt  = ev.retryCount  ?? 1;
+    const maxRetry = ev.maxRetries  ?? 3;
+    const sliceId  = ev.id ?? '?';
+    const title    = ev.title ? `"${ev.title}"` : `Slice ${sliceId}`;
+
+    const toast = document.createElement('div');
+    toast.className = 'api-retry-toast';
+    toast.innerHTML = `
+      <div class="api-retry-toast-title">&#9888; Slice ${escHtml(String(sliceId))} moved back to queue</div>
+      <div class="api-retry-toast-body">
+        Anthropic's AI service returned an error (HTTP&nbsp;500 — temporary outage on their end, not a problem with your slice).
+        The slice has been automatically re-queued and will retry when the service recovers.
+        <br><span style="color:#92400e;font-weight:500">Attempt ${attempt} of ${maxRetry}.</span>
+      </div>
+      <button class="api-retry-toast-dismiss">Dismiss</button>`;
+
+    toast.querySelector('.api-retry-toast-dismiss').addEventListener('click', () => dismissToast(toast));
+    container.appendChild(toast);
+
+    // Auto-dismiss after 15 s
+    setTimeout(() => dismissToast(toast), 15000);
+  }
+
+  function dismissToast(toast) {
+    if (!toast.parentNode) return;
+    toast.classList.add('toast-out');
+    setTimeout(() => toast.parentNode && toast.parentNode.removeChild(toast), 300);
+  }
+
+  function processApiRetries(apiRetries) {
+    if (!apiRetries || !apiRetries.length) return;
+    let newest = lastApiRetryTs;
+    for (const ev of apiRetries) {
+      if (!ev.ts || ev.ts <= lastApiRetryTs) continue;
+      showApiRetryToast(ev);
+      if (!newest || ev.ts > newest) newest = ev.ts;
+    }
+    if (newest !== lastApiRetryTs) {
+      lastApiRetryTs = newest;
+      try { sessionStorage.setItem('lastApiRetryTs', newest); } catch (_) {}
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   function escHtml(str) {
     return String(str ?? '')
@@ -2696,13 +2821,17 @@
 
       const goalHtml = row.goal ? `<div class="queue-expand" id="queue-expand-${eid}"><span class="queue-expand-goal">${escHtml(row.goal)}</span></div>` : '';
       const chevronHtml = row.goal ? `<span class="queue-chevron" id="queue-chevron-${eid}" onclick="toggleQueueExpand('${eid}')">\u25b8</span>` : '';
+      const retryCount = row.apiRetryCount || 0;
+      const retryBadge = retryCount > 0
+        ? `<span class="queue-retry-badge" title="Automatically re-queued after Anthropic API outage">&#8635; API retry ${retryCount}</span>`
+        : '';
       return `<div class="queue-row-wrap">
       <div class="queue-row" data-id="${eid}" data-state="${row.rowState}" data-amendment="${isAmd}" draggable="${draggable}">
         <span class="queue-drag-handle ${handleClass}">&#10303;</span>
         <span class="queue-row-id">#${eid}</span>
         <span class="sprint-badge">${escHtml(sprintLabel)}</span>
         <span class="queue-row-title">${escHtml(row.title || '')}</span>
-        ${chevronHtml}
+        ${retryBadge}${chevronHtml}
         <span class="queue-row-actions">${actionsHtml}</span>
       </div>${goalHtml}</div>`;
     }).join('');

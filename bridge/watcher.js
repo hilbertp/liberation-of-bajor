@@ -851,6 +851,13 @@ function invokeOBrien(briefContent, donePath, inProgressPath, errorPath, id, eff
                 msg: `Anthropic API error — requeueing for retry (attempt ${retryCount + 1}/${MAX_API_RETRIES})`,
                 durationMs,
               });
+              // Write to register so the dashboard can surface a toast
+              registerEvent(id, 'API_RETRY', {
+                retryCount: retryCount + 1,
+                maxRetries: MAX_API_RETRIES,
+                durationMs,
+                title,
+              });
               processing = false;
               heartbeatState.status = 'idle';
               heartbeatState.current_brief = null;

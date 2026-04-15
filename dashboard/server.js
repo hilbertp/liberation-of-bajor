@@ -227,6 +227,12 @@ function buildBridgeData() {
       acceptedSet.add(ev.id);
     }
   }
+  // API_RETRY events — last 20, newest first, for toast notification
+  const apiRetries = events
+    .filter(ev => ev.event === 'API_RETRY')
+    .slice(-20)
+    .reverse();
+
   const recent = Object.values(completedMap)
     .sort((a, b) => {
       if (!a.completedAt) return 1;
@@ -292,9 +298,10 @@ function buildBridgeData() {
       from:      fm.from      ?? null,
       created:   fm.created   ?? null,
       completed: fm.completed ?? null,
-      goal:      betterGoal ?? goalFromRegister ?? goalFromFm,
-      references: fm.references ?? null,
-      sprint:    fm.sprint ? parseInt(fm.sprint, 10) : getSprintForId(id),
+      goal:           betterGoal ?? goalFromRegister ?? goalFromFm,
+      references:     fm.references ?? null,
+      sprint:         fm.sprint ? parseInt(fm.sprint, 10) : getSprintForId(id),
+      apiRetryCount:  fm._api_retry_count ? parseInt(fm._api_retry_count, 10) : 0,
     });
   }
 
@@ -315,7 +322,7 @@ function buildBridgeData() {
     if (raw && raw.sliceId) nogActive = raw;
   } catch (_) {}
 
-  return { heartbeat, queue, briefs, recent, economics, queueOrder, nogActive };
+  return { heartbeat, queue, briefs, recent, economics, queueOrder, nogActive, apiRetries };
 }
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
