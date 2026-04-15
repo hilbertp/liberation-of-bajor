@@ -72,15 +72,21 @@ Before every slice invocation, branch switch, or merge, `autoCommitDirtyTree()`
 commits any modified tracked files to the current branch. Uses `git add -u`
 (tracked files only — no surprise additions of runtime files).
 
-### 3. Pre-merge regression guard
+### 3. Pre-merge regression guard (tiered)
 
-Before every merge, the watcher checks ALL files changed by the branch. If any
-file on the branch is significantly shorter than main's version (>15% shrinkage
-for files >50 lines), the merge is **blocked**. This catches:
+Before every merge, the watcher checks ALL changed files for size regressions.
+The response depends on *why* the file got shorter:
 
-- Stale-base builds where Rom overwrites features.
-- Truncation damage from context compaction.
-- Partial writes from FUSE failures.
+| Scenario | Action |
+|----------|--------|
+| **Stale base** + any file >15% shorter | **BLOCK** — builder worked from old code, likely overwrote features |
+| **Current base** + any file >50% shorter | **BLOCK** — likely truncation damage, not a deliberate refactor |
+| **Current base** + file 15-50% shorter | **ALLOW** with warning — intentional cleanup/refactor |
+
+"Stale base" means the branch forked from an older main commit, not the current
+tip. This is the key signal: if the builder had the latest code and chose to
+shorten a file, that's a legitimate refactor. If they were working from an old
+copy, the shortening probably means features they never saw are getting lost.
 
 ### 4. Post-merge verification
 

@@ -1720,14 +1720,32 @@ function mergeBranch(id, branchName, title) {
     fuseSafeCheckoutMain(id);
 
     // ── Regression guard ────────────────────────────────────────────────
-    // Check ALL files changed by the branch for size regressions.
-    // If any file on the branch is significantly shorter than main's version
-    // (>15% shrinkage for files >50 lines), the merge is blocked.
-    // This catches stale-base builds and truncation damage.
+    // Two-tier check:
+    //
+    // 1. STALE BASE detection (hard block):
+    //    If the branch forked from an older main (merge-base != main tip),
+    //    any file shrinkage >15% is almost certainly a regression — the
+    //    builder was working from an outdated copy and overwrote features
+    //    they never had. Block the merge.
+    //
+    // 2. CURRENT BASE + severe shrinkage (hard block):
+    //    Even on a current base, >50% shrinkage of a substantial file is
+    //    likely truncation damage (context compaction, FUSE partial write),
+    //    not a deliberate refactor. Block it.
+    //
+    // 3. CURRENT BASE + moderate shrinkage (allow with warning):
+    //    If the branch is from the latest main and a file got 15-50%
+    //    shorter, that's probably an intentional refactor or cleanup.
+    //    Log a warning for the audit trail but allow the merge.
+    //
     try {
+      const mergeBase = execSync(`git merge-base main ${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+      const mainTip   = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+      const isCurrentBase = mergeBase === mainTip;
+
       const changedFiles = execSync(`git diff --name-only main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
       if (changedFiles) {
-        const regressions = [];
+        const shrunk = [];
         for (const file of changedFiles.split('\n').filter(Boolean)) {
           try {
             const mainLines = parseInt(execSync(
@@ -1742,31 +1760,68 @@ function mergeBranch(id, branchName, title) {
             // Only check files that are substantial (>50 lines on main)
             if (mainLines > 50 && branchLines < mainLines * 0.85) {
               const pct = Math.round((1 - branchLines / mainLines) * 100);
-              regressions.push({ file, mainLines, branchLines, pct });
+              shrunk.push({ file, mainLines, branchLines, pct });
             }
           } catch (_) {
             // File is new or deleted — not a regression
           }
         }
 
-        if (regressions.length > 0) {
-          const summary = regressions.map(r => `${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines})`).join('; ');
-          log('warn', 'merge', {
-            id,
-            msg: `Regression guard: ${regressions.length} file(s) significantly shorter on branch — aborting merge`,
-            branchName,
-            regressions,
-          });
-          registerEvent(id, 'MERGE_FAILED', {
-            reason: `regression_guard: ${regressions.length} file(s) shrunk: ${summary}`,
-            branch: branchName,
-          });
-          print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}${regressions.length} file(s) regressed on branch`);
-          for (const r of regressions) {
-            print(`${B.vert}    ${C.yellow}⚠${C.reset}  ${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines} lines)`);
+        if (shrunk.length > 0) {
+          // Tier 1: Stale base — any shrinkage is a likely regression
+          if (!isCurrentBase) {
+            const summary = shrunk.map(r => `${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines})`).join('; ');
+            log('warn', 'merge', {
+              id,
+              msg: `Regression guard BLOCK: stale base + ${shrunk.length} file(s) shorter — likely overwritten features`,
+              branchName,
+              mergeBase: mergeBase.slice(0, 8),
+              mainTip: mainTip.slice(0, 8),
+              shrunk,
+            });
+            registerEvent(id, 'MERGE_FAILED', {
+              reason: `regression_guard_stale_base: ${shrunk.length} file(s) shrunk on stale fork: ${summary}`,
+              branch: branchName,
+            });
+            print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}Stale base + ${shrunk.length} file(s) shrunk`);
+            print(`${B.vert}    ${C.yellow}⚠${C.reset}  Branch forked from ${mergeBase.slice(0, 8)}, main is now ${mainTip.slice(0, 8)}`);
+            for (const r of shrunk) {
+              print(`${B.vert}    ${C.yellow}⚠${C.reset}  ${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines} lines)`);
+            }
+            return { success: false, sha: null, error: 'regression_guard_stale_base' };
           }
-          print(`${B.vert}    ${C.yellow}⚠${C.reset}  Likely stale base — Rom may have overwritten features`);
-          return { success: false, sha: null, error: 'regression_guard' };
+
+          // Tier 2: Current base but severe shrinkage (>50%) — likely truncation
+          const severe = shrunk.filter(r => r.pct > 50);
+          if (severe.length > 0) {
+            const summary = severe.map(r => `${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines})`).join('; ');
+            log('warn', 'merge', {
+              id,
+              msg: `Regression guard BLOCK: ${severe.length} file(s) lost >50% content — likely truncation`,
+              branchName,
+              severe,
+            });
+            registerEvent(id, 'MERGE_FAILED', {
+              reason: `regression_guard_truncation: ${severe.length} file(s) severely shrunk: ${summary}`,
+              branch: branchName,
+            });
+            print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}${severe.length} file(s) lost >50% content — likely truncation`);
+            for (const r of severe) {
+              print(`${B.vert}    ${C.yellow}⚠${C.reset}  ${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines} lines)`);
+            }
+            return { success: false, sha: null, error: 'regression_guard_truncation' };
+          }
+
+          // Tier 3: Current base + moderate shrinkage — intentional refactor, allow with warning
+          log('info', 'merge', {
+            id,
+            msg: `Regression guard PASS (with warning): current base + ${shrunk.length} file(s) moderately shorter — treating as intentional`,
+            branchName,
+            shrunk,
+          });
+          for (const r of shrunk) {
+            print(`${B.vert}    ${C.yellow}⚠${C.reset}  ${r.file}: ${r.pct}% shorter (${r.branchLines} vs ${r.mainLines} lines) — allowed (current base)`);
+          }
         }
       }
     } catch (guardErr) {
