@@ -5,6 +5,7 @@ const path = require('path');
 const { execFile, execSync } = require('child_process');
 const { appendTimesheet, updateTimesheet, rebuildMerged } = require('./slicelog');
 const { appendKiraEvent } = require('./kira-events');
+const { buildNogPrompt } = require('./nog-prompt');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -53,10 +54,14 @@ const REGISTER_FILE  = path.resolve(__dirname, 'register.jsonl');
 const NOG_ACTIVE_FILE = path.resolve(__dirname, 'nog-active.json');
 const TRASH_DIR      = path.resolve(QUEUE_DIR, '..', 'trash');
 const WORKTREE_BASE  = '/tmp/ds9-worktrees';
+const LOGS_DIR       = path.resolve(__dirname, 'logs');
+const ESCALATIONS_DIR = path.resolve(__dirname, 'kira-escalations');
 
-// Ensure queue + trash directories exist.
+// Ensure queue + trash + logs + escalations directories exist.
 fs.mkdirSync(QUEUE_DIR, { recursive: true });
 fs.mkdirSync(TRASH_DIR, { recursive: true });
+fs.mkdirSync(LOGS_DIR, { recursive: true });
+fs.mkdirSync(ESCALATIONS_DIR, { recursive: true });
 
 // Deprecation check: timeoutMs was the old wall-clock timeout. It is now ignored.
 // Log once at startup if found in the config file.
@@ -2485,6 +2490,463 @@ function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) 
 }
 
 // ---------------------------------------------------------------------------
+// Nog code review invocation
+// ---------------------------------------------------------------------------
+
+/**
+ * countNogRounds(sliceContent)
+ *
+ * Counts existing `## Nog Review — Round N` headers in the slice file
+ * to determine the current round number.
+ */
+function countNogRounds(sliceContent) {
+  const matches = sliceContent.match(/^## Nog Review — Round \d+/gm);
+  return matches ? matches.length : 0;
+}
+
+/**
+ * invokeNog(id)
+ *
+ * Reads the ARCHIVED slice and DONE report for a given slice ID,
+ * determines the current Nog review round, builds the Nog prompt,
+ * invokes Nog headless via `claude -p`, and handles the verdict.
+ *
+ * PASS → proceed to existing evaluator flow (ACCEPTED path).
+ * RETURN → create amendment and re-queue for O'Brien.
+ * Round 6 → escalate to Kira.
+ */
+function invokeNog(id) {
+  const archivedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  const donePath = path.join(QUEUE_DIR, `${id}-EVALUATING.md`); // renamed from DONE by poll loop
+
+  // Read ARCHIVED file (original slice + any prior Nog reviews).
+  let sliceContent;
+  try {
+    sliceContent = fs.readFileSync(archivedPath, 'utf-8');
+  } catch (err) {
+    log('warn', 'nog', { id, msg: 'ARCHIVED file not found — skipping Nog review', error: err.message });
+    try { fs.renameSync(donePath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
+    processing = false;
+    heartbeatState.status = 'idle';
+    heartbeatState.current_slice = null;
+    heartbeatState.current_slice_goal = null;
+    heartbeatState.pickupTime = null;
+    writeHeartbeat();
+    return;
+  }
+
+  // Read DONE report (EVALUATING is the renamed DONE).
+  let doneReportContents;
+  try {
+    doneReportContents = fs.readFileSync(donePath, 'utf-8');
+  } catch (err) {
+    log('warn', 'nog', { id, msg: 'EVALUATING file not found — skipping Nog review', error: err.message });
+    processing = false;
+    heartbeatState.status = 'idle';
+    heartbeatState.current_slice = null;
+    heartbeatState.current_slice_goal = null;
+    heartbeatState.pickupTime = null;
+    writeHeartbeat();
+    return;
+  }
+
+  // Extract branch name from DONE report.
+  const doneMeta = parseFrontmatter(doneReportContents) || {};
+  const branchName = doneMeta.branch || null;
+  const sliceMeta = parseFrontmatter(sliceContent) || {};
+  const rootId = sliceMeta.root_commission_id || id;
+
+  // Determine round number.
+  const existingRounds = countNogRounds(sliceContent);
+  const round = existingRounds + 1;
+
+  // Round 6 escalation: do not invoke Nog again.
+  if (round > 5) {
+    log('warn', 'nog', { id, msg: `Round ${round} — escalating to Kira`, round });
+
+    // Write escalation file.
+    const escalationContent = [
+      '---',
+      `id: "${id}"`,
+      `title: "NOG ESCALATION — slice ${id}"`,
+      'from: nog',
+      'to: kira',
+      `created: "${new Date().toISOString()}"`,
+      `round: ${round}`,
+      `branch: "${branchName || ''}"`,
+      '---',
+      '',
+      '## Nog Escalation — Round 6',
+      '',
+      `Slice ${id} has not passed Nog review after 5 rounds.`,
+      'Full slice history (including all Nog review rounds) follows.',
+      '',
+      '## Slice file contents',
+      '',
+      sliceContent,
+      '',
+      "## O'Brien's latest DONE report",
+      '',
+      doneReportContents,
+    ].join('\n');
+
+    try {
+      fs.writeFileSync(path.join(ESCALATIONS_DIR, `${id}-NOG-ESCALATION.md`), escalationContent);
+      log('info', 'nog', { id, msg: 'Wrote NOG-ESCALATION file' });
+    } catch (err) {
+      log('error', 'nog', { id, msg: 'Failed to write NOG-ESCALATION file', error: err.message });
+    }
+
+    appendKiraEvent({
+      event: 'NOG_ESCALATION',
+      slice_id: id,
+      root_id: rootId !== id ? rootId : null,
+      cycle: round,
+      branch: branchName || null,
+      details: `Slice ${id} failed Nog review after 5 rounds — escalating to Kira`,
+    });
+
+    registerEvent(id, 'NOG_ESCALATION', { round, branch: branchName });
+
+    // Rename to STUCK.
+    const stuckPath = path.join(QUEUE_DIR, `${id}-STUCK.md`);
+    try {
+      fs.renameSync(donePath, stuckPath);
+      log('info', 'state', { id, from: 'EVALUATING', to: 'STUCK' });
+    } catch (err) {
+      log('warn', 'nog', { id, msg: 'Failed to rename to STUCK', error: err.message });
+    }
+
+    updateTimesheet(id, { result: 'STUCK', cycle: round, ts_result: new Date().toISOString() });
+
+    print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} NOG ESCALATION${SYM.sep}Slice ${id} failed 5 Nog rounds — escalated to Kira`);
+    print(`${B.bl}${B.sng.repeat(W - 1)}`);
+    print('');
+
+    processing = false;
+    heartbeatState.status = 'idle';
+    heartbeatState.current_slice = null;
+    heartbeatState.current_slice_goal = null;
+    heartbeatState.pickupTime = null;
+    heartbeatState.processed_total += 1;
+    writeHeartbeat();
+    return;
+  }
+
+  // Build git diff.
+  let gitDiff = '(no diff available)';
+  if (branchName) {
+    try {
+      gitDiff = execSync(`git diff main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 });
+    } catch (err) {
+      log('warn', 'nog', { id, msg: 'Failed to get git diff for Nog', error: err.message });
+    }
+  }
+
+  // Resolve worktree path for Nog's cwd.
+  let nogWorktreePath = getWorktreePath(id);
+  if (!fs.existsSync(nogWorktreePath) && branchName) {
+    try {
+      nogWorktreePath = createWorktree(id, branchName);
+    } catch (wtErr) {
+      log('warn', 'nog', { id, msg: 'Could not create worktree for Nog — falling back to PROJECT_DIR', error: wtErr.message });
+      nogWorktreePath = PROJECT_DIR;
+    }
+  } else if (!fs.existsSync(nogWorktreePath)) {
+    nogWorktreePath = PROJECT_DIR;
+  }
+
+  // Build prompt.
+  const prompt = buildNogPrompt({
+    id,
+    round,
+    sliceFileContents: sliceContent,
+    doneReportContents,
+    gitDiff,
+    slicePath: archivedPath,
+  });
+
+  log('info', 'nog', { id, round, branchName, msg: 'Invoking Nog code review' });
+  print(`${B.tl}${B.sng.repeat(W - 1)}`);
+  print(`${B.vert}  ${SYM.right} Nog Code Review${SYM.sep}Slice ${id} — Round ${round} of 5`);
+  print(`${B.vert}    Reviewing — fresh claude -p session, slice + DONE report + diff injected`);
+  print(`${B.vert}`);
+
+  const pickupTime = Date.now();
+
+  // Write nog-active.json for dashboard.
+  try {
+    fs.writeFileSync(NOG_ACTIVE_FILE, JSON.stringify({
+      sliceId: String(id),
+      title: sliceMeta.title || null,
+      round,
+      invokedAt: new Date().toISOString(),
+      phase: 'code_review',
+    }), 'utf8');
+  } catch (_) {}
+
+  // Progress tick every 60s.
+  const tickInterval = setInterval(() => {
+    printProgressTick(Date.now() - pickupTime);
+  }, 60000);
+
+  // Log file for Nog's output.
+  const nogLogPath = path.join(LOGS_DIR, `nog-${id}-round${round}.log`);
+
+  const child = execFile(
+    config.claudeCommand,
+    config.claudeArgs,
+    {
+      cwd: nogWorktreePath,
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+    },
+    (err, stdout, stderr) => {
+      clearInterval(tickInterval);
+      try { fs.renameSync(NOG_ACTIVE_FILE, path.join(TRASH_DIR, 'nog-active.json.done')); } catch (_) {}
+      const durationMs = Date.now() - pickupTime;
+
+      // Write Nog's output to log file.
+      try {
+        fs.writeFileSync(nogLogPath, (stdout || '') + '\n--- stderr ---\n' + (stderr || ''));
+      } catch (logErr) {
+        log('warn', 'nog', { id, msg: 'Failed to write Nog log', error: logErr.message });
+      }
+
+      // Read Nog's verdict file.
+      const nogVerdictPath = path.join(QUEUE_DIR, `${id}-NOG.md`);
+      // Also check the worktree queue dir.
+      const worktreeNogPath = path.join(nogWorktreePath, 'bridge', 'queue', `${id}-NOG.md`);
+
+      // Copy verdict from worktree if needed.
+      try {
+        if (fs.existsSync(worktreeNogPath) && !fs.existsSync(nogVerdictPath)) {
+          fs.copyFileSync(worktreeNogPath, nogVerdictPath);
+        }
+      } catch (_) {}
+
+      let verdict = null;
+      let summary = '';
+
+      if (!err) {
+        try {
+          const nogContent = fs.readFileSync(nogVerdictPath, 'utf-8');
+          const nogMeta = parseFrontmatter(nogContent);
+          if (nogMeta) {
+            verdict = nogMeta.verdict ? nogMeta.verdict.toUpperCase() : null;
+            summary = nogMeta.summary || '';
+          }
+        } catch (readErr) {
+          log('warn', 'nog', { id, msg: 'Failed to read NOG.md verdict', error: readErr.message });
+        }
+      } else {
+        log('error', 'nog', { id, msg: 'claude -p Nog review failed', error: err.message, durationMs });
+      }
+
+      // Copy updated slice file from worktree if Nog appended to it.
+      const worktreeArchivedPath = path.join(nogWorktreePath, 'bridge', 'queue', `${id}-ARCHIVED.md`);
+      try {
+        if (fs.existsSync(worktreeArchivedPath)) {
+          fs.copyFileSync(worktreeArchivedPath, archivedPath);
+        }
+      } catch (_) {}
+
+      if (!verdict || !['PASS', 'RETURN'].includes(verdict)) {
+        // Missing or unparseable verdict — treat as RETURN.
+        log('warn', 'nog', { id, msg: 'Nog verdict unreadable — treating as RETURN', verdict, durationMs });
+
+        registerEvent(id, 'NOG_RETURN', { round, reason: 'verdict_unreadable' });
+        appendKiraEvent({
+          event: 'NOG_ESCALATION',
+          slice_id: id,
+          root_id: rootId !== id ? rootId : null,
+          cycle: round,
+          branch: branchName || null,
+          details: `Nog verdict unreadable for slice ${id} round ${round}`,
+        });
+
+        // Create amendment for O'Brien with error details.
+        handleNogReturn(id, rootId, round, branchName, donePath, sliceContent, 'Nog verdict unreadable — manual review required', durationMs);
+
+        print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} Nog verdict UNREADABLE${SYM.sep}treated as RETURN (round ${round})`);
+        print(`${B.bl}${B.sng.repeat(W - 1)}`);
+        print('');
+
+        processing = false;
+        heartbeatState.status = 'idle';
+        heartbeatState.current_slice = null;
+        heartbeatState.current_slice_goal = null;
+        heartbeatState.pickupTime = null;
+        heartbeatState.processed_total += 1;
+        writeHeartbeat();
+        return;
+      }
+
+      if (verdict === 'PASS') {
+        log('info', 'nog', { id, verdict: 'PASS', round, durationMs, summary });
+        registerEvent(id, 'NOG_PASS', { round });
+
+        // Rename EVALUATING back to DONE so the existing evaluator picks it up.
+        try {
+          fs.renameSync(donePath, path.join(QUEUE_DIR, `${id}-DONE.md`));
+          log('info', 'state', { id, from: 'EVALUATING', to: 'DONE', reason: 'nog_pass' });
+        } catch (renameErr) {
+          log('warn', 'nog', { id, msg: 'Failed to rename back to DONE after PASS', error: renameErr.message });
+        }
+
+        // Clean up NOG.md verdict file.
+        try { fs.renameSync(nogVerdictPath, path.join(TRASH_DIR, `${id}-NOG.md.pass`)); } catch (_) {}
+
+        print(`${B.vert}    ${C.green}${SYM.check}${C.reset} Nog PASS${SYM.sep}Round ${round}${summary ? SYM.dash + summary : ''}`);
+        print(`${B.vert}    Proceeding to evaluator`);
+        print(`${B.bl}${B.sng.repeat(W - 1)}`);
+        print('');
+
+        // Now invoke the existing evaluator.
+        // Re-claim the DONE file — the evaluator expects to rename DONE → EVALUATING.
+        // We'll let the next poll cycle pick it up naturally.
+        processing = false;
+        heartbeatState.status = 'idle';
+        heartbeatState.current_slice = null;
+        heartbeatState.current_slice_goal = null;
+        heartbeatState.pickupTime = null;
+        heartbeatState.processed_total += 1;
+        writeHeartbeat();
+        return;
+      }
+
+      // RETURN verdict.
+      log('info', 'nog', { id, verdict: 'RETURN', round, durationMs, summary });
+      registerEvent(id, 'NOG_RETURN', { round });
+
+      handleNogReturn(id, rootId, round, branchName, donePath, sliceContent, summary || 'Nog review findings — see slice file', durationMs);
+
+      // Clean up NOG.md verdict file.
+      try { fs.renameSync(nogVerdictPath, path.join(TRASH_DIR, `${id}-NOG.md.return`)); } catch (_) {}
+
+      print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} Nog RETURN${SYM.sep}Round ${round}${summary ? SYM.dash + summary : ''}`);
+      print(`${B.vert}    Amendment queued for O'Brien`);
+      print(`${B.bl}${B.sng.repeat(W - 1)}`);
+      print('');
+
+      processing = false;
+      heartbeatState.status = 'idle';
+      heartbeatState.current_slice = null;
+      heartbeatState.current_slice_goal = null;
+      heartbeatState.pickupTime = null;
+      heartbeatState.processed_total += 1;
+      writeHeartbeat();
+    }
+  );
+
+  // Stream to log file as well.
+  try {
+    const logStream = fs.createWriteStream(nogLogPath, { flags: 'w' });
+    child.stdout.on('data', (chunk) => { try { logStream.write(chunk); } catch (_) {} });
+    child.stderr.on('data', (chunk) => { try { logStream.write('[stderr] ' + chunk); } catch (_) {} });
+  } catch (_) {}
+
+  child.stdin.write(prompt);
+  child.stdin.end();
+}
+
+/**
+ * handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceContent, summary, durationMs)
+ *
+ * RETURN verdict from Nog: create amendment slice for O'Brien.
+ */
+function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceContent, summary, durationMs) {
+  const reviewedPath = path.join(QUEUE_DIR, `${id}-REVIEWED.md`);
+  try {
+    fs.renameSync(evaluatingPath, reviewedPath);
+    log('info', 'state', { id, from: 'EVALUATING', to: 'REVIEWED', reason: 'nog_return' });
+  } catch (err) {
+    log('warn', 'nog', { id, msg: 'Failed to rename EVALUATING to REVIEWED', error: err.message });
+  }
+
+  // Write amendment slice PENDING.
+  const nextId = nextSliceId(QUEUE_DIR);
+  const amendmentContent = [
+    '---',
+    `id: "${nextId}"`,
+    `title: "Nog return round ${round} — fix findings for slice ${rootId}"`,
+    `goal: "Address Nog code review findings from round ${round} for slice ${rootId}."`,
+    'from: nog',
+    'to: rom',
+    'priority: normal',
+    `created: "${new Date().toISOString()}"`,
+    `amendment: "${branchName || ''}"`,
+    'timeout_min: null',
+    'type: amendment',
+    `root_commission_id: "${rootId}"`,
+    `amendment_cycle: ${round}`,
+    `branch: "${branchName || ''}"`,
+    `round: ${round}`,
+    'status: PENDING',
+    '---',
+    '',
+    '## Objective',
+    '',
+    `This is a Nog code review return for slice ${rootId} (round ${round} of 5).`,
+    '',
+    '**IMPORTANT: The watcher handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
+    '',
+    '## Nog review summary',
+    '',
+    summary,
+    '',
+    '## Instructions',
+    '',
+    'Read the Nog review section appended to the slice file for detailed findings.',
+    'Fix all issues identified by Nog, then write your DONE report.',
+    '',
+    '## Original slice (with Nog review history)',
+    '',
+    sliceContent,
+    '',
+    '## Constraints',
+    '',
+    '- Do NOT create, checkout, or switch branches. The watcher manages the branch lifecycle.',
+    '- Commit your changes to the current branch only.',
+    '',
+    '## Success criteria',
+    '',
+    '1. All Nog findings from the latest round are addressed.',
+    `2. All original acceptance criteria from slice ${rootId} are met.`,
+    '3. DONE report includes branch name in frontmatter.',
+  ].join('\n');
+
+  const amendmentPendingPath = path.join(QUEUE_DIR, `${nextId}-PENDING.md`);
+  try {
+    fs.writeFileSync(amendmentPendingPath, amendmentContent);
+    log('info', 'nog', { id, msg: `Wrote Nog amendment slice ${nextId}-PENDING.md`, nextId, round, rootId });
+  } catch (err) {
+    log('warn', 'nog', { id, msg: 'Failed to write Nog amendment slice PENDING', error: err.message });
+  }
+}
+
+/**
+ * hasNogReviewEvent(id)
+ *
+ * Returns true if register.jsonl contains a NOG_PASS or NOG_ESCALATION event
+ * for this slice ID — meaning Nog has already reviewed it.
+ */
+function hasNogReviewEvent(id) {
+  try {
+    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.id === String(id) && ['NOG_PASS', 'NOG_ESCALATION'].includes(entry.event)) {
+          return true;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // ERROR file (written by watcher on invocation failure or invalid slice)
 // ---------------------------------------------------------------------------
 
@@ -2693,7 +3155,7 @@ function poll() {
       continue;
     }
 
-    // Skip if already reviewed.
+    // Skip if already reviewed (evaluator has run).
     if (hasReviewEvent(doneId)) continue;
 
     // Rename DONE → EVALUATING to claim it.
@@ -2712,13 +3174,21 @@ function poll() {
     }
 
     processing = true;
-    heartbeatState.status = 'evaluating';
     heartbeatState.current_slice = doneId;
     heartbeatState.current_slice_goal = sliceMeta.goal || null;
     heartbeatState.pickupTime = Date.now();
-    writeHeartbeat();
 
-    invokeEvaluator(doneId);
+    // Route: Nog code review first, then evaluator.
+    // If Nog has already passed this slice, go straight to evaluator.
+    if (hasNogReviewEvent(doneId)) {
+      heartbeatState.status = 'evaluating';
+      writeHeartbeat();
+      invokeEvaluator(doneId);
+    } else {
+      heartbeatState.status = 'nog_review';
+      writeHeartbeat();
+      invokeNog(doneId);
+    }
     return;
   }
 

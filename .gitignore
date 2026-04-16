@@ -31,5 +31,8 @@ bridge/register.jsonl
 bridge/nog-active.json
 bridge/wormhole-heartbeat.json
 
+# Nog review logs (runtime, not source)
+bridge/logs/
+
 # Kira event drain — append-only runtime file
 bridge/kira-events.jsonl
