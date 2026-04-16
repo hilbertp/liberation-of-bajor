@@ -1,15 +1,15 @@
 {
-  "ts": "2026-04-16T00:39:48.356Z",
-  "status": "idle",
-  "current_slice": null,
+  "ts": "2026-04-16T00:53:38.458Z",
+  "status": "evaluating",
+  "current_slice": "118",
   "current_slice_title": null,
-  "current_slice_goal": null,
-  "slice_elapsed_seconds": null,
+  "current_slice_goal": "Watcher uses git worktrees for slice execution; PROJECT_DIR stays on main permanently; dashboard never shows stale branch files.",
+  "slice_elapsed_seconds": 54,
   "last_activity_ts": null,
-  "processed_total": 2,
+  "processed_total": 3,
   "queue": {
-    "waiting": 1,
-    "active": 1,
+    "waiting": 0,
+    "active": 0,
     "done": 14,
     "error": 8
   }
