@@ -142,14 +142,16 @@ function writeRegisterEvent(event) {
 }
 
 // ── Title/goal fallback ─────────────────────────────────────────────────────
-// First try the COMMISSIONED register event, then fall back to {id}-ARCHIVED.md.
+// First try the COMMISSIONED register event, then fall back to {id}-PARKED.md (or legacy ARCHIVED).
 function getTitleAndGoal(id, commissioned) {
   if (commissioned[id]?.title) {
     return { title: commissioned[id].title, goal: commissioned[id].goal ?? null };
   }
+  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const legacyPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
   try {
-    const archivedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
-    const content = fs.readFileSync(archivedPath, 'utf8');
+    const resolvedPath = fs.existsSync(parkedPath) ? parkedPath : legacyPath;
+    const content = fs.readFileSync(resolvedPath, 'utf8');
     const fm = parseFrontmatter(content);
     return { title: fm.title ?? null, goal: fm.goal ?? null };
   } catch (_) {
@@ -626,15 +628,15 @@ const server = http.createServer(async (req, res) => {
   const queueContentMatch = pathname.match(/^\/api\/queue\/(\d+)\/content$/);
   if (queueContentMatch && req.method === 'GET') {
     const id = queueContentMatch[1];
-    // ARCHIVED.md is the original prompt given to O'Brien — show it first.
-    // Fall back to PENDING (same content, still in queue) then STAGED, then DONE report.
+    // PARKED.md is the original prompt given to O'Brien — show it first.
+    // Fall back to legacy ARCHIVED, then PENDING (same content, still in queue) then STAGED, then DONE report.
     const candidates = [
+      path.join(QUEUE_DIR, `${id}-PARKED.md`),
       path.join(QUEUE_DIR, `${id}-ARCHIVED.md`),
       path.join(QUEUE_DIR, `${id}-PENDING.md`),
       path.join(STAGED_DIR, `${id}-STAGED.md`),
       path.join(STAGED_DIR, `${id}-NEEDS_AMENDMENT.md`),
       path.join(QUEUE_DIR, `${id}-ACCEPTED.md`),
-      path.join(QUEUE_DIR, `${id}-ARCHIVED.md`),
       path.join(QUEUE_DIR, `${id}-DONE.md`),
     ];
     let found = null;

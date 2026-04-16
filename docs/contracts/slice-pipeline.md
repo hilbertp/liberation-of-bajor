@@ -117,6 +117,8 @@ The BR has 8 business states. The filesystem uses 7 suffixes. The mapping is:
 | 7 | MERGED       | (commit on `main`)  | n/a                      | Merge commit; file keeps `-ACCEPTED.md` until archive. |
 | 8 | ARCHIVED     | `-ARCHIVED.md`      | `bridge/queue/`          | Terminal read-only state. Branch + worktree pruned. |
 
+> **Note:** `-PARKED.md` is an internal intermediate suffix (not a BR state) used by the watcher to park the original slice body while Nog evaluates. It replaces the previous use of `-ARCHIVED.md` for this purpose (slice 145). Legacy slices may still use `-ARCHIVED.md` as the parked suffix.
+
 ---
 
 ## 5. Transition mechanics
@@ -266,7 +268,7 @@ The BR explicitly says these are flagged for triage and **not** part of the requ
 
 1. **State-name divergence: QUEUED vs. `-PENDING.md`.** BR state 2 is "QUEUED"; the on-disk suffix is `-PENDING.md`. Target: rename the suffix to `-QUEUED.md`, or update the BR if the implementation name is preferred.
 2. **State-name divergence: IN_REVIEW vs. `-REVIEWED.md`.** BR state 5 is "IN_REVIEW"; the on-disk suffix is `-REVIEWED.md`. The name implies completion rather than "being reviewed." Target: rename to `-IN_REVIEW.md`.
-3. **`ARCHIVED` name collision** (BR §Known code divergences). `bridge/watcher.js` around line 1826 reuses `-ARCHIVED.md` as a "parked-during-review" suffix before Nog evaluates, colliding with the terminal ARCHIVED state. Target: rename the parked suffix (e.g. `-PARKED.md`) or remove the behaviour.
+3. **`ARCHIVED` name collision** (BR §Known code divergences). `bridge/watcher.js` around line 1826 reused `-ARCHIVED.md` as a "parked-during-review" suffix before Nog evaluates, colliding with the terminal ARCHIVED state. **Fixed in slice 145** — parked suffix renamed to `-PARKED.md`. Legacy slices retain `-ARCHIVED.md` as the parked suffix with fallback reads in both the watcher and dashboard server.
 4. **Undocumented `-REVIEWED.md` sidecar** (BR §Known code divergences, line ~2446). Possibly a leftover sidecar artefact; either document its role or remove.
 
 These are candidates for their own slices. None are blocking.

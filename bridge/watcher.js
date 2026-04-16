@@ -1820,18 +1820,18 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
 
       printSessionSummary();
 
-      // Archive the original slice so Nog's evaluation task can find the
-      // success criteria.  Rename IN_PROGRESS → ARCHIVED (permanent archive).
-      // The ARCHIVED suffix is inert — the poll loop only looks for PENDING files.
-      const archivedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+      // Park the original slice so Nog's evaluation task can find the
+      // success criteria.  Rename IN_PROGRESS → PARKED (intermediate hold).
+      // The PARKED suffix is inert — the poll loop only looks for PENDING files.
+      const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
       if (fs.existsSync(inProgressPath)) {
         try {
-          fs.renameSync(inProgressPath, archivedPath);
-          log('info', 'state', { id, msg: 'Archived slice', from: 'IN_PROGRESS', to: 'ARCHIVED' });
+          fs.renameSync(inProgressPath, parkedPath);
+          log('info', 'state', { id, msg: 'Parked slice', from: 'IN_PROGRESS', to: 'PARKED' });
         } catch (archiveErr) {
           // Fallback: if rename fails, try to delete so the queue doesn't jam.
-          log('warn', 'error', { id, msg: 'Failed to archive IN_PROGRESS file, trashing instead', error: archiveErr.message });
-          try { fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.archive-fail')); } catch (_) {}
+          log('warn', 'error', { id, msg: 'Failed to park IN_PROGRESS file, trashing instead', error: archiveErr.message });
+          try { fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.park-fail')); } catch (_) {}
         }
       }
 
@@ -1993,15 +1993,17 @@ function extractJSON(text) {
  * and handles ACCEPTED / AMENDMENT_NEEDED / STUCK outcomes.
  */
 function invokeEvaluator(id) {
-  const archivedPath  = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  const parkedPath  = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const legacyParkedPath  = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
   const evaluatingPath  = path.join(QUEUE_DIR, `${id}-EVALUATING.md`);
 
-  // Read ARCHIVED file (original ACs).
+  // Read PARKED file (original ACs). Fall back to legacy ARCHIVED for pre-145 slices.
   let sliceContent;
+  const resolvedParkedPath = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
   try {
-    sliceContent = fs.readFileSync(archivedPath, 'utf-8');
+    sliceContent = fs.readFileSync(resolvedParkedPath, 'utf-8');
   } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'ARCHIVED file not found — skipping evaluation', error: err.message });
+    log('warn', 'evaluator', { id, msg: 'PARKED file not found — skipping evaluation', error: err.message });
     // Rename back to DONE so the poll loop can try again later.
     try { fs.renameSync(evaluatingPath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
     processing = false;
@@ -2328,11 +2330,13 @@ function mergeBranch(id, branchName, title) {
  * ACCEPTED verdict: register event, rename EVALUATING → ACCEPTED, merge branch to main directly.
  */
 function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationMs) {
-  // Read title from slice file for the merge commit message.
-  const archivedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  // Read title from parked slice file for the merge commit message.
+  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const legacyParkedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  const resolvedParkedPath = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
   let title = null;
   try {
-    const commMeta = parseFrontmatter(fs.readFileSync(archivedPath, 'utf-8'));
+    const commMeta = parseFrontmatter(fs.readFileSync(resolvedParkedPath, 'utf-8'));
     if (commMeta) title = commMeta.title || null;
   } catch (_) {}
 
@@ -2521,7 +2525,7 @@ function countNogRounds(sliceContent) {
 /**
  * invokeNog(id)
  *
- * Reads the ARCHIVED slice and DONE report for a given slice ID,
+ * Reads the PARKED slice and DONE report for a given slice ID,
  * determines the current Nog review round, builds the Nog prompt,
  * invokes Nog headless via `claude -p`, and handles the verdict.
  *
@@ -2530,15 +2534,17 @@ function countNogRounds(sliceContent) {
  * Round 6 → escalate to Kira.
  */
 function invokeNog(id) {
-  const archivedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const legacyParkedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
   const donePath = path.join(QUEUE_DIR, `${id}-EVALUATING.md`); // renamed from DONE by poll loop
 
-  // Read ARCHIVED file (original slice + any prior Nog reviews).
+  // Read PARKED file (original slice + any prior Nog reviews). Fall back to legacy ARCHIVED.
+  const resolvedParkedPath = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
   let sliceContent;
   try {
-    sliceContent = fs.readFileSync(archivedPath, 'utf-8');
+    sliceContent = fs.readFileSync(resolvedParkedPath, 'utf-8');
   } catch (err) {
-    log('warn', 'nog', { id, msg: 'ARCHIVED file not found — skipping Nog review', error: err.message });
+    log('warn', 'nog', { id, msg: 'PARKED file not found — skipping Nog review', error: err.message });
     try { fs.renameSync(donePath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
     processing = false;
     heartbeatState.status = 'idle';
@@ -2758,10 +2764,12 @@ function invokeNog(id) {
       }
 
       // Copy updated slice file from worktree if Nog appended to it.
-      const worktreeArchivedPath = path.join(nogWorktreePath, 'bridge', 'queue', `${id}-ARCHIVED.md`);
+      const worktreeParkedPath = path.join(nogWorktreePath, 'bridge', 'queue', `${id}-PARKED.md`);
+      const worktreeLegacyPath = path.join(nogWorktreePath, 'bridge', 'queue', `${id}-ARCHIVED.md`);
+      const worktreeResolved = fs.existsSync(worktreeParkedPath) ? worktreeParkedPath : worktreeLegacyPath;
       try {
-        if (fs.existsSync(worktreeArchivedPath)) {
-          fs.copyFileSync(worktreeArchivedPath, archivedPath);
+        if (fs.existsSync(worktreeResolved)) {
+          fs.copyFileSync(worktreeResolved, resolvedParkedPath);
         }
       } catch (_) {}
 
@@ -3146,17 +3154,25 @@ function poll() {
   for (const doneFile of doneFiles) {
     const doneId = doneFile.replace('-DONE.md', '');
     const donePath = path.join(QUEUE_DIR, doneFile);
-    const archivedPath = path.join(QUEUE_DIR, `${doneId}-ARCHIVED.md`);
+    const parkedPath = path.join(QUEUE_DIR, `${doneId}-PARKED.md`);
+    const legacyParkedPath = path.join(QUEUE_DIR, `${doneId}-ARCHIVED.md`);
 
-    // Skip if ARCHIVED file not present (Rom may still be running — archive not yet written).
-    if (!fs.existsSync(archivedPath)) continue;
+    // Skip if PARKED file not present (Rom may still be running — park not yet written).
+    if (!fs.existsSync(parkedPath)) {
+      if (fs.existsSync(legacyParkedPath)) {
+        log('warn', 'state', { id: doneId, msg: 'Legacy ARCHIVED suffix found — pre-slice-145 file' });
+      } else {
+        continue;
+      }
+    }
 
     // Legacy: merge slices (type: merge) are auto-accepted without claude -p.
     // Deprecated: handleAccepted() now merges directly — no new merge slices
     // are generated. This block handles any legacy merge slices still in the queue.
     let sliceMeta = {};
     try {
-      sliceMeta = parseFrontmatter(fs.readFileSync(archivedPath, 'utf-8')) || {};
+      const resolvedPath = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
+      sliceMeta = parseFrontmatter(fs.readFileSync(resolvedPath, 'utf-8')) || {};
     } catch (_) {}
 
     if (sliceMeta.type === 'merge') {
@@ -3411,9 +3427,11 @@ function crashRecovery() {
       if (meta) branchName = meta.branch || null;
     } catch (_) {}
 
-    // Read title from ARCHIVED file.
+    // Read title from PARKED file (fall back to legacy ARCHIVED).
+    const parkedTitlePath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+    const legacyTitlePath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
     try {
-      const commContent = fs.readFileSync(path.join(QUEUE_DIR, `${id}-ARCHIVED.md`), 'utf-8');
+      const commContent = fs.readFileSync(fs.existsSync(parkedTitlePath) ? parkedTitlePath : legacyTitlePath, 'utf-8');
       const commMeta = parseFrontmatter(commContent);
       if (commMeta) title = commMeta.title || null;
     } catch (_) {}
@@ -3460,11 +3478,12 @@ function crashRecovery() {
     const hasDone        = fs.existsSync(path.join(QUEUE_DIR, `${id}-DONE.md`));
     const hasError       = fs.existsSync(path.join(QUEUE_DIR, `${id}-ERROR.md`));
     const hasAccepted    = fs.existsSync(path.join(QUEUE_DIR, `${id}-ACCEPTED.md`));
+    const hasParked      = fs.existsSync(path.join(QUEUE_DIR, `${id}-PARKED.md`));
     const hasArchived    = fs.existsSync(path.join(QUEUE_DIR, `${id}-ARCHIVED.md`));
 
-    if (hasDone || hasError || hasAccepted || hasArchived) {
+    if (hasDone || hasError || hasAccepted || hasParked || hasArchived) {
       // Slice already resolved — the IN_PROGRESS file is a stale artifact.
-      const resolvedAs = hasDone ? 'DONE' : hasError ? 'ERROR' : hasAccepted ? 'ACCEPTED' : 'ARCHIVED';
+      const resolvedAs = hasDone ? 'DONE' : hasError ? 'ERROR' : hasAccepted ? 'ACCEPTED' : hasParked ? 'PARKED' : 'ARCHIVED';
       try {
         fs.renameSync(inProgressPath, path.join(TRASH_DIR, path.basename(inProgressPath) + '.orphan'));
         log('info', 'startup_recovery', {
