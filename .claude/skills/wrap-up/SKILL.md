@@ -101,7 +101,7 @@ Key fields to get right:
 - `notes` — explain the estimate so it's auditable later
 - `deliverable` — the grouping slug, consistent with prior entries for the same work
 
-**Location:** `bridge/timesheet.jsonl` (append, never overwrite)
+**Location:** `bridge/timesheet-{role}.jsonl` where `{role}` is your role name, lowercase (e.g. `timesheet-kira.jsonl` for Kira). Append via `wormhole_append_jsonl` targeting the per-role file. Never write to the merged `timesheet.jsonl` directly — the watcher rebuilds it automatically.
 
 ---
 
@@ -117,7 +117,7 @@ The project has a script at `bridge/usage-snapshot.js` that calls the Claude API
 node bridge/usage-snapshot.js --log
 ```
 
-This reads the `sessionKey` from either `CLAUDE_SESSION_KEY` env var or `bridge/bridge.config.json`, diffs against the previous snapshot at `bridge/.usage-snapshot.json`, and appends a delta entry to `bridge/timesheet.jsonl` with `source: "usage-snapshot"`.
+This reads the `sessionKey` from either `CLAUDE_SESSION_KEY` env var or `bridge/bridge.config.json`, diffs against the previous snapshot at `bridge/.usage-snapshot.json`, and appends a delta entry to `bridge/timesheet-watcher.jsonl` with `source: "usage-snapshot"`. The watcher rebuilds the merged `timesheet.jsonl` automatically.
 
 If the script succeeds, session cost is captured automatically. Move on.
 
@@ -144,7 +144,7 @@ If no new ideas surfaced, skip this step.
 
 ## Step 6: Stamp anchor
 
-Append one line to `bridge/anchors.jsonl`:
+Append one line to `bridge/anchors-{role}.jsonl` where `{role}` is your role name, lowercase (e.g. `anchors-kira.jsonl` for Kira). Append via `wormhole_append_jsonl`. Never write to the merged `anchors.jsonl` directly — the watcher rebuilds it automatically.
 
 ```json
 {
@@ -185,10 +185,10 @@ If the user mentioned what they're doing next, acknowledge it. Otherwise, don't 
 |---|---|---|
 | 1 | Consolidate directives and decisions | Role's project anchor (e.g. KIRA.md) |
 | 2 | Capture learnings | LEARNING.md + DEBRIEF.md |
-| 3 | Estimate hours | bridge/timesheet.jsonl |
+| 3 | Estimate hours | bridge/timesheet-{role}.jsonl |
 | 4 | Record session cost | In timesheet notes |
 | 5 | Idea capture | IDEAS.md |
-| 6 | Stamp anchor | bridge/anchors.jsonl |
+| 6 | Stamp anchor | bridge/anchors-{role}.jsonl |
 | 7 | Report | Summary to user |
 
 **Total time to run this skill: ~2 minutes.** That's the insurance premium against permanent information loss. Pay it every time.

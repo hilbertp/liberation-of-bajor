@@ -21,7 +21,7 @@ const path = require('path');
 
 const ORG_ID = 'cff23f1b-5c33-4c40-8e81-453be39aed7d';
 const USAGE_URL = `https://claude.ai/api/organizations/${ORG_ID}/usage`;
-const TIMESHEET = path.join(__dirname, 'timesheet.jsonl');
+const TIMESHEET = path.join(__dirname, 'timesheet-watcher.jsonl');
 const SNAPSHOT_FILE = path.join(__dirname, '.usage-snapshot.json');
 const CONFIG_FILE = path.join(__dirname, 'bridge.config.json');
 const LOG_FILE = path.join(__dirname, 'bridge.log');
@@ -192,8 +192,10 @@ function formatSnapshot(raw) {
         extra_eur_total: snap.extra.used_eur != null ? parseFloat(snap.extra.used_eur) : null,
       };
       fs.appendFileSync(TIMESHEET, JSON.stringify(entry) + '\n');
+      // Rebuild merged view so readers see the new entry
+      try { require('./slicelog').rebuildMerged('timesheet'); } catch (_) {}
       if (!silent) {
-        console.log('\n  ✓ delta logged to timesheet.jsonl');
+        console.log('\n  ✓ delta logged to timesheet-watcher.jsonl');
       }
     }
   }

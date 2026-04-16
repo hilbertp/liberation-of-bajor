@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile, execSync } = require('child_process');
-const { appendTimesheet, updateTimesheet } = require('./slicelog');
+const { appendTimesheet, updateTimesheet, rebuildMerged } = require('./slicelog');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -3023,6 +3023,30 @@ if (require.main === module) {
   // Start poll interval + immediate first poll.
   setInterval(poll, config.pollIntervalMs);
   poll();
+
+  // -------------------------------------------------------------------------
+  // Writer-split: watch for external changes to per-role JSONL files.
+  // When Kira (or any other role) appends to e.g. timesheet-kira.jsonl via
+  // Wormhole, rebuild the merged view so readers see the new data.
+  // -------------------------------------------------------------------------
+  const SPLIT_BASES = ['timesheet', 'anchors', 'tt-audit'];
+  const rebuildDebounce = {};
+
+  fs.watch(__dirname, (eventType, filename) => {
+    if (!filename || !filename.endsWith('.jsonl')) return;
+    for (const base of SPLIT_BASES) {
+      // Match per-role files like timesheet-kira.jsonl but not the merged timesheet.jsonl
+      if (filename.startsWith(`${base}-`) && filename !== `${base}.jsonl`) {
+        // Debounce: multiple change events fire in rapid succession
+        if (rebuildDebounce[base]) clearTimeout(rebuildDebounce[base]);
+        rebuildDebounce[base] = setTimeout(() => {
+          rebuildMerged(base);
+          rebuildDebounce[base] = null;
+        }, 200);
+        break;
+      }
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

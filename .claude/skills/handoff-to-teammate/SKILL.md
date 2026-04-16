@@ -108,14 +108,13 @@ This captures the closing token snapshot. The delta between open (check-handoffs
 
 ---
 
-## Step 1c: Append outbound record to tt-audit.jsonl
+## Step 1c: Append outbound record to tt-audit
 
-After writing all handoff artifacts, append **one line** to `bridge/tt-audit.jsonl` for this handoff using a single shell command:
+After writing all handoff artifacts, append **one line** to `bridge/tt-audit-{role}.jsonl` where `{role}` is your role name, lowercase (e.g. `tt-audit-kira.jsonl` for Kira). Append via `wormhole_append_jsonl`. Never write to the merged `tt-audit.jsonl` directly — the watcher rebuilds it automatically.
 
 ```bash
-echo '{ "role": "<sending role, lowercase>", "ts": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "to": "<receiving role, lowercase>", "ref": "<handoff filename>" }' >> bridge/tt-audit.jsonl
+echo '{ "role": "<sending role, lowercase>", "ts": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "to": "<receiving role, lowercase>", "ref": "<handoff filename>" }' >> bridge/tt-audit-{role}.jsonl
 ```
-
 - `role` is the current role performing the handoff (the sender), lowercase.
 - `ts` is the current UTC timestamp in ISO 8601 format.
 - `to` is the primary receiving role, lowercase. For multi-recipient handoffs, use the first receiver.
@@ -128,7 +127,7 @@ One line per handoff invocation. Newline-terminated.
 
 ## Step 2: Log economics (once per session)
 
-Append **one** entry to `bridge/timesheet.jsonl` covering all work done in this session — regardless of how many artifacts were written. Multi-recipient handoffs do not produce multiple timesheet entries.
+Append **one** entry to `bridge/timesheet-{role}.jsonl` (where `{role}` is your role name, lowercase) covering all work done in this session — regardless of how many artifacts were written. Multi-recipient handoffs do not produce multiple timesheet entries.
 
 Use the full schema from `skills/estimate-hours/SKILL.md`. Key fields: `human_hours` (honest estimate) and `notes` (explain it — a bare number is unauditable).
 
@@ -138,7 +137,7 @@ Also run the idea-capture checkpoint: scan the session for any ideas not yet cap
 
 ## Step 3: Stamp one anchor
 
-Append **one** line to `bridge/anchors.jsonl` — regardless of how many artifacts were written.
+Append **one** line to `bridge/anchors-{role}.jsonl` (where `{role}` is your role name, lowercase) — regardless of how many artifacts were written. Append via `wormhole_append_jsonl`. Never write to the merged `anchors.jsonl` directly — the watcher rebuilds it automatically.
 
 **Schema:**
 
@@ -193,6 +192,6 @@ Example (Dax handing to Kira + O'Brien):
 |---|---|---|
 | 0 | Identify all receivers | 1+ roles |
 | 1 | Write artifact per receiver | 1 file per receiver |
-| 2 | Log economics | 1 timesheet entry |
-| 3 | Stamp anchor (artifact array) | 1 anchor entry |
+| 2 | Log economics | 1 timesheet-{role}.jsonl entry |
+| 3 | Stamp anchor (artifact array) | 1 anchors-{role}.jsonl entry |
 | 4 | Report all receivers and next action | — |
