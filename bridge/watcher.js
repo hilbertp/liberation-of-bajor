@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile, execSync } = require('child_process');
 const { appendTimesheet, updateTimesheet, rebuildMerged } = require('./slicelog');
+const { appendKiraEvent } = require('./kira-events');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1293,6 +1294,7 @@ function writeHeartbeat() {
 
 let processing = false;
 let idlePrintCounter = 0;
+let sessionHasProcessed = false;
 
 // ---------------------------------------------------------------------------
 // Rom invocation
@@ -1343,6 +1345,14 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
     writeErrorFile(errorPath2, id, reason, err, '', '', {});
     log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
     registerEvent(id, 'ERROR', { reason, error: err.message });
+    appendKiraEvent({
+      event: 'ERROR',
+      slice_id: id,
+      root_id: sliceMeta.root_commission_id || null,
+      cycle: null,
+      branch: sliceBranch || null,
+      details: `Slice ${id} errored: ${reason}`,
+    });
     processing = false;
     heartbeatState.status = 'idle';
     heartbeatState.current_slice = null;
@@ -1502,6 +1512,14 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             writeErrorFile(errorPath, id, 'incomplete_metrics', null, stdout, '', { missingFields: metricsValid.invalid, durationMs });
             log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'incomplete_metrics' });
             registerEvent(id, 'ERROR', { reason: 'incomplete_metrics', invalid: metricsValid.invalid, durationMs });
+            appendKiraEvent({
+              event: 'ERROR',
+              slice_id: id,
+              root_id: sliceMeta.root_commission_id || null,
+              cycle: null,
+              branch: sliceBranch || null,
+              details: `Slice ${id} errored: incomplete_metrics`,
+            });
             closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'Incomplete metrics in DONE report');
             recordSessionResult(false, tokensIn, tokensOut, costUsd);
           } else {
@@ -1559,6 +1577,14 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
           writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr, { durationMs });
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'no_report' });
           registerEvent(id, 'ERROR', { reason: 'no_report', durationMs });
+          appendKiraEvent({
+            event: 'ERROR',
+            slice_id: id,
+            root_id: sliceMeta.root_commission_id || null,
+            cycle: null,
+            branch: sliceBranch || null,
+            details: `Slice ${id} errored: no_report`,
+          });
           // timesheet write point 2 — update watcher row at terminal state
           updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
           closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'No report written');
@@ -1707,6 +1733,14 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
         writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
         registerEvent(id, 'ERROR', { reason, exitCode: err.code, durationMs });
+        appendKiraEvent({
+          event: 'ERROR',
+          slice_id: id,
+          root_id: sliceMeta.root_commission_id || null,
+          cycle: null,
+          branch: sliceBranch || null,
+          details: `Slice ${id} errored: ${reason}`,
+        });
         // timesheet write point 2 — update watcher row at terminal state
         updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
         closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, reasonDisplay);
@@ -1738,6 +1772,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
       heartbeatState.current_slice_goal = null;
       heartbeatState.pickupTime = null;
       heartbeatState.processed_total += 1;
+      sessionHasProcessed = true;
       writeHeartbeat();
     }
   );
@@ -2432,6 +2467,15 @@ function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) 
 
   callReviewAPI(id, 'STUCK', reason);
 
+  appendKiraEvent({
+    event: 'STUCK',
+    slice_id: id,
+    root_id: null,
+    cycle: cycle || null,
+    branch: branchName || null,
+    details: `Slice ${id} stuck after ${cycle} cycles`,
+  });
+
   // Clean up the worktree — STUCK is a terminal state (5th rejection / back to O'Brien)
   try { cleanupWorktree(id, branchName); } catch (_) {}
 
@@ -2680,6 +2724,20 @@ function poll() {
 
   // === Priority 2: Commission next PENDING (only if no DONE files to evaluate) ===
   if (pendingFiles.length === 0) {
+    // ALL_COMPLETE check: pipeline is idle after processing at least one slice this session.
+    const hasInProgress = files.some(f => f.endsWith('-IN_PROGRESS.md'));
+    if (sessionHasProcessed && !hasInProgress) {
+      appendKiraEvent({
+        event: 'ALL_COMPLETE',
+        slice_id: null,
+        root_id: null,
+        cycle: null,
+        branch: null,
+        details: 'All active slices are terminal. Pipeline idle.',
+      });
+      sessionHasProcessed = false;
+    }
+
     idlePrintCounter += 1;
     if (idlePrintCounter >= 12) {
       idlePrintCounter = 0;
@@ -2758,6 +2816,14 @@ function poll() {
     writeErrorFile(errPath, errId, 'invalid_slice', null, '', '', { missingFields });
     log('info', 'state', { id: errId, from: 'PENDING', to: 'ERROR', reason: 'invalid_slice' });
     registerEvent(errId, 'ERROR', { reason: 'invalid_slice', missingFields });
+    appendKiraEvent({
+      event: 'ERROR',
+      slice_id: errId,
+      root_id: null,
+      cycle: null,
+      branch: null,
+      details: `Slice ${errId} errored: invalid_slice`,
+    });
 
     // Remove the invalid PENDING file so it doesn't loop indefinitely.
     try { fs.renameSync(pendingPath, path.join(TRASH_DIR, path.basename(pendingPath) + '.invalid')); } catch (_) {}

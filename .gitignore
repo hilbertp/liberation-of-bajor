@@ -30,3 +30,6 @@ bridge/register.jsonl
 !.env.example
 bridge/nog-active.json
 bridge/wormhole-heartbeat.json
+
+# Kira event drain — append-only runtime file
+bridge/kira-events.jsonl
