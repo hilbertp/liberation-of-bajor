@@ -2105,7 +2105,7 @@
       // Invocation gap indicator: visible only during IN_PROGRESS with no first output yet
       const gapEl = document.getElementById('invocation-gap-indicator');
       if (gapEl) {
-        gapEl.style.display = (heartbeat.status === 'processing' && !heartbeat.firstOutputAt) ? '' : 'none';
+        gapEl.style.display = (heartbeat.status === 'processing' && !heartbeat.last_activity_ts) ? '' : 'none';
       }
 
       if (heartbeat.slice_elapsed_seconds != null) {
