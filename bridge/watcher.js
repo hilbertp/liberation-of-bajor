@@ -51,6 +51,7 @@ const PROJECT_DIR    = path.resolve(__dirname, config.projectDir);
 const REGISTER_FILE  = path.resolve(__dirname, 'register.jsonl');
 const NOG_ACTIVE_FILE = path.resolve(__dirname, 'nog-active.json');
 const TRASH_DIR      = path.resolve(QUEUE_DIR, '..', 'trash');
+const WORKTREE_BASE  = '/tmp/ds9-worktrees';
 
 // Ensure queue + trash directories exist.
 fs.mkdirSync(QUEUE_DIR, { recursive: true });
@@ -620,6 +621,9 @@ function updateFrontmatter(text, updates) {
 const BRANCH_NAME_REGEX = /^[a-zA-Z0-9._\/-]+$/;
 
 /**
+ * @deprecated No longer called — PROJECT_DIR stays on main permanently with
+ * worktree-based execution. Retained as dead code for safety.
+ *
  * autoCommitDirtyTree(reason)
  *
  * If the working tree has uncommitted changes to tracked files, commit them
@@ -649,6 +653,9 @@ function autoCommitDirtyTree(reason) {
 }
 
 /**
+ * @deprecated No longer called — PROJECT_DIR stays on main permanently with
+ * worktree-based execution. Retained as dead code for safety.
+ *
  * fuseSafeCheckoutMain(id)
  *
  * FUSE-safe replacement for `git checkout main`. Never calls unlink.
@@ -748,6 +755,9 @@ function fuseSafeCheckoutMain(id) {
 }
 
 /**
+ * @deprecated No longer called — worktrees replace checkout. Retained as dead
+ * code for safety.
+ *
  * fuseSafeCheckoutBranch(id, branchName)
  *
  * FUSE-safe checkout to an EXISTING feature branch.
@@ -825,6 +835,8 @@ function fuseSafeCheckoutBranch(id, branchName) {
 }
 
 /**
+ * @deprecated Replaced by createWorktree(). Retained as dead code for safety.
+ *
  * createBranchFromMain(id, branchName)
  *
  * Watcher-owned branch creation. Creates a new branch from main HEAD.
@@ -875,18 +887,19 @@ function createBranchFromMain(id, branchName) {
  *
  * Returns { ok, issues[] }.
  */
-function verifyBranchState(id, expectedBranch) {
+function verifyBranchState(id, expectedBranch, cwd) {
+  cwd = cwd || PROJECT_DIR;
   const issues = [];
 
   // Check 1: correct branch
-  const current = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  const current = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8' }).trim();
   if (current !== expectedBranch) {
     issues.push(`HEAD is on '${current}', expected '${expectedBranch}'`);
   }
 
   // Check 2: commits ahead of main
   try {
-    const ahead = execSync(`git rev-list main..${expectedBranch} --count`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const ahead = execSync(`git rev-list main..${expectedBranch} --count`, { cwd, encoding: 'utf-8' }).trim();
     if (parseInt(ahead, 10) === 0) {
       issues.push(`Branch ${expectedBranch} has no commits ahead of main`);
     }
@@ -896,11 +909,11 @@ function verifyBranchState(id, expectedBranch) {
 
   // Check 3: merge-base is on main (branch forked from main, not from some other branch)
   try {
-    const mergeBase = execSync(`git merge-base main ${expectedBranch}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-    const mainTip   = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const mergeBase = execSync(`git merge-base main ${expectedBranch}`, { cwd, encoding: 'utf-8' }).trim();
+    const mainTip   = execSync('git rev-parse main', { cwd, encoding: 'utf-8' }).trim();
     // The merge-base should be the main tip at branch creation time.
     // Verify it's reachable from main.
-    const isOnMain = execSync(`git branch --contains ${mergeBase}`, { cwd: PROJECT_DIR, encoding: 'utf-8' });
+    const isOnMain = execSync(`git branch --contains ${mergeBase}`, { cwd, encoding: 'utf-8' });
     if (!isOnMain.includes('main')) {
       issues.push(`Branch merge-base ${mergeBase.slice(0,8)} is not on main — possible stale fork`);
     }
@@ -1011,6 +1024,184 @@ function sanitizeBranchName(name) {
     throw new Error(`Invalid branch name: "${name}" — contains unsafe pattern`);
   }
   return name;
+}
+
+// ---------------------------------------------------------------------------
+// Worktree management
+// ---------------------------------------------------------------------------
+
+/**
+ * getWorktreePath(id)
+ *
+ * Returns the deterministic worktree path for a given slice ID.
+ */
+function getWorktreePath(id) {
+  return path.join(WORKTREE_BASE, String(id));
+}
+
+/**
+ * createWorktree(id, branchName)
+ *
+ * Creates a git worktree at /tmp/ds9-worktrees/{id}/ for the given branch.
+ * For new slices: creates a new branch from main.
+ * For amendments: checks out the existing branch.
+ * If a worktree already exists for this ID (requeue reuse), returns it.
+ * If the branch is already checked out in another worktree, prunes the old one.
+ *
+ * Returns the worktree path. Throws on failure.
+ */
+function createWorktree(id, branchName) {
+  branchName = sanitizeBranchName(branchName);
+  const wtPath = getWorktreePath(id);
+
+  // If this ID already has a worktree, reuse it (Part 6: rejection requeue reuse)
+  if (fs.existsSync(wtPath)) {
+    log('info', 'worktree', { id, msg: `Reusing existing worktree at ${wtPath}`, branch: branchName });
+    return wtPath;
+  }
+
+  // Ensure base dir exists
+  fs.mkdirSync(WORKTREE_BASE, { recursive: true });
+
+  // Check if branch already exists
+  let branchExists = false;
+  try {
+    execSync(`git rev-parse --verify refs/heads/${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    branchExists = true;
+  } catch (_) {}
+
+  if (branchExists) {
+    // Branch exists — check if it's already in another worktree and prune if needed
+    try {
+      const wtList = execSync('git worktree list --porcelain', { cwd: PROJECT_DIR, encoding: 'utf-8' });
+      const blocks = wtList.split('\n\n').filter(Boolean);
+      for (const block of blocks) {
+        const lines = block.split('\n');
+        const wtLine = lines.find(l => l.startsWith('worktree '));
+        const brLine = lines.find(l => l.startsWith('branch '));
+        if (wtLine && brLine && brLine === `branch refs/heads/${branchName}`) {
+          const oldPath = wtLine.replace('worktree ', '');
+          if (oldPath !== PROJECT_DIR) {
+            try { fs.rmSync(oldPath, { recursive: true, force: true }); } catch (_) {}
+            execSync('git worktree prune', { cwd: PROJECT_DIR, stdio: 'pipe' });
+            log('info', 'worktree', { id, msg: `Pruned stale worktree at ${oldPath} for branch ${branchName}` });
+          }
+        }
+      }
+    } catch (_) {}
+
+    // Existing branch (amendment or retry)
+    execSync(`git worktree add "${wtPath}" ${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+  } else {
+    // New branch from main
+    execSync(`git worktree add "${wtPath}" -b ${branchName} main`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+  }
+
+  log('info', 'worktree', { id, msg: `Created worktree at ${wtPath} on branch ${branchName}`, branchExists });
+  return wtPath;
+}
+
+/**
+ * cleanupWorktree(id, branchName)
+ *
+ * FUSE-safe worktree cleanup:
+ *   1. rm -rf /tmp/ds9-worktrees/{id} (local FS, no FUSE issue)
+ *   2. Rename .git/worktrees/{id}/ to .dead suffix (FUSE-safe)
+ *   3. Rename branch ref to .dead suffix (FUSE-safe)
+ */
+function cleanupWorktree(id, branchName) {
+  const wtPath = getWorktreePath(id);
+
+  // Step 1: remove worktree directory (local FS — no FUSE)
+  try {
+    fs.rmSync(wtPath, { recursive: true, force: true });
+  } catch (err) {
+    log('warn', 'worktree', { id, msg: 'Failed to remove worktree dir', error: err.message });
+  }
+
+  // Prune so git knows the worktree is gone
+  try {
+    execSync('git worktree prune', { cwd: PROJECT_DIR, stdio: 'pipe' });
+  } catch (_) {}
+
+  // Step 2: FUSE-safe cleanup of .git/worktrees/{id}/
+  const gitWorktreeDir = path.join(PROJECT_DIR, '.git', 'worktrees', String(id));
+  if (fs.existsSync(gitWorktreeDir)) {
+    try {
+      fs.renameSync(gitWorktreeDir, gitWorktreeDir + '.dead');
+    } catch (err) {
+      log('warn', 'worktree', { id, msg: 'Failed to rename .git/worktrees entry to .dead', error: err.message });
+    }
+  }
+
+  // Step 3: FUSE-safe cleanup of branch ref
+  if (branchName) {
+    try {
+      branchName = sanitizeBranchName(branchName);
+      const refPath = path.join(PROJECT_DIR, '.git', 'refs', 'heads', ...branchName.split('/'));
+      if (fs.existsSync(refPath)) {
+        fs.renameSync(refPath, refPath + '.dead');
+      }
+    } catch (err) {
+      log('warn', 'worktree', { id, msg: 'Failed to rename branch ref to .dead', error: err.message });
+    }
+  }
+
+  log('info', 'worktree', { id, msg: `Cleaned up worktree for slice ${id}` });
+}
+
+/**
+ * cleanupDeadWorktrees()
+ *
+ * Startup scan: removes .dead entries left by cleanupWorktree from a prior
+ * session that couldn't fully delete due to FUSE constraints.
+ */
+function cleanupDeadWorktrees() {
+  // Clean .dead entries from .git/worktrees/
+  const worktreesDir = path.join(PROJECT_DIR, '.git', 'worktrees');
+  try {
+    const entries = fs.readdirSync(worktreesDir);
+    for (const entry of entries) {
+      if (entry.endsWith('.dead')) {
+        try {
+          fs.rmSync(path.join(worktreesDir, entry), { recursive: true, force: true });
+          log('info', 'worktree', { msg: `Startup: cleaned dead worktree entry ${entry}` });
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
+  // Clean .dead entries from .git/refs/heads/slice/
+  const sliceRefsDir = path.join(PROJECT_DIR, '.git', 'refs', 'heads', 'slice');
+  try {
+    const entries = fs.readdirSync(sliceRefsDir);
+    for (const entry of entries) {
+      if (entry.endsWith('.dead')) {
+        try {
+          fs.unlinkSync(path.join(sliceRefsDir, entry));
+          log('info', 'worktree', { msg: `Startup: cleaned dead branch ref slice/${entry}` });
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+
+  // Clean up any leftover worktree dirs in /tmp from crashed sessions
+  try {
+    if (fs.existsSync(WORKTREE_BASE)) {
+      const dirs = fs.readdirSync(WORKTREE_BASE);
+      for (const dir of dirs) {
+        const wtDir = path.join(WORKTREE_BASE, dir);
+        // Check if this worktree is still registered with git
+        try {
+          const wtList = execSync('git worktree list --porcelain', { cwd: PROJECT_DIR, encoding: 'utf-8' });
+          if (!wtList.includes(wtDir)) {
+            fs.rmSync(wtDir, { recursive: true, force: true });
+            log('info', 'worktree', { msg: `Startup: cleaned orphaned worktree dir ${dir}` });
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
 }
 
 /**
@@ -1131,56 +1322,47 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
     ? (sliceMeta.branch || `slice/${sliceMeta.root_commission_id || id}`)
     : `slice/${id}`;
 
-  if (!isAmendment) {
-    // NEW SLICE: fetch → checkout main → create branch → verify
-    try {
-      fuseSafeCheckoutMain(id);
+  // ── WORKTREE-BASED BRANCH LIFECYCLE ──────────────────────────────────────
+  // Each slice gets its own git worktree at /tmp/ds9-worktrees/{id}/.
+  // PROJECT_DIR stays on main permanently. The dashboard is never affected.
+  //
+  // New slices:  create worktree with new branch from main
+  // Amendments:  create worktree on existing branch (prunes old worktree if needed)
+  // ──────────────────────────────────────────────────────────────────────────
+  let worktreePath;
+  try {
+    if (!isAmendment) {
       ensureMainIsFresh(id);
-      createBranchFromMain(id, sliceBranch);
-      log('info', 'branch', { id, msg: `Watcher created branch ${sliceBranch} from main` });
-    } catch (err) {
-      log('error', 'branch', { id, msg: `Failed to create branch ${sliceBranch} — aborting invocation`, error: err.message });
-      // Write ERROR — don't invoke Rom on unknown git state
-      const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
-      writeErrorFile(errorPath2, id, 'branch_creation_failed', err, '', '', {});
-      log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'branch_creation_failed' });
-      registerEvent(id, 'ERROR', { reason: 'branch_creation_failed', error: err.message });
-      processing = false;
-      heartbeatState.status = 'idle';
-      heartbeatState.current_slice = null;
-      heartbeatState.current_slice_title = null;
-      heartbeatState.current_slice_goal = null;
-      heartbeatState.pickupTime = null;
-      writeHeartbeat();
-      return;
     }
-  } else {
-    // AMENDMENT: checkout existing feature branch
-    try {
-      fuseSafeCheckoutBranch(id, sliceBranch);
-      log('info', 'branch', { id, msg: `Watcher checked out amendment branch ${sliceBranch}` });
-    } catch (err) {
-      log('error', 'branch', { id, msg: `Failed to checkout amendment branch ${sliceBranch} — aborting`, error: err.message });
-      const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
-      writeErrorFile(errorPath2, id, 'amendment_branch_checkout_failed', err, '', '', {});
-      log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'amendment_branch_checkout_failed' });
-      registerEvent(id, 'ERROR', { reason: 'amendment_branch_checkout_failed', error: err.message });
-      processing = false;
-      heartbeatState.status = 'idle';
-      heartbeatState.current_slice = null;
-      heartbeatState.current_slice_title = null;
-      heartbeatState.current_slice_goal = null;
-      heartbeatState.pickupTime = null;
-      writeHeartbeat();
-      return;
-    }
+    worktreePath = createWorktree(id, sliceBranch);
+    log('info', 'branch', { id, msg: `Worktree ready at ${worktreePath} on branch ${sliceBranch}`, isAmendment });
+  } catch (err) {
+    const reason = isAmendment ? 'amendment_branch_checkout_failed' : 'branch_creation_failed';
+    log('error', 'branch', { id, msg: `Failed to create worktree for ${sliceBranch} — aborting invocation`, error: err.message });
+    const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
+    writeErrorFile(errorPath2, id, reason, err, '', '', {});
+    log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
+    registerEvent(id, 'ERROR', { reason, error: err.message });
+    processing = false;
+    heartbeatState.status = 'idle';
+    heartbeatState.current_slice = null;
+    heartbeatState.current_slice_title = null;
+    heartbeatState.current_slice_goal = null;
+    heartbeatState.pickupTime = null;
+    writeHeartbeat();
+    return;
   }
+
+  // Ensure the worktree has a queue directory for the DONE report
+  const worktreeQueueDir = path.join(worktreePath, 'bridge', 'queue');
+  fs.mkdirSync(worktreeQueueDir, { recursive: true });
+  const worktreeDonePath = path.join(worktreeQueueDir, `${id}-DONE.md`);
 
   const doneTemplate = [
     '',
     '## DONE report template',
     '',
-    'Write your report to: ' + donePath,
+    'Write your report to: ' + worktreeDonePath,
     '',
     'Use this exact frontmatter structure (fill in real values):',
     '',
@@ -1234,7 +1416,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
     msg: 'Invoking claude -p',
     command: config.claudeCommand,
     args: config.claudeArgs,
-    cwd: PROJECT_DIR,
+    cwd: worktreePath,
     inactivityTimeoutMs: effectiveInactivityMs,
   });
 
@@ -1247,7 +1429,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
     config.claudeCommand,
     config.claudeArgs,
     {
-      cwd: PROJECT_DIR,
+      cwd: worktreePath,
       encoding: 'utf-8',
       // No timeout here — we handle killing via inactivity check below.
       maxBuffer: 10 * 1024 * 1024, // 10 MB stdout buffer
@@ -1266,28 +1448,36 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
       const { tokensIn, tokensOut } = extractTokenUsage(stdout || '');
       const costUsd = computeCost(tokensIn, tokensOut);
 
-      // ── POST-INVOCATION BRANCH VERIFICATION ─────────────────────────────
-      // The watcher verifies that commits are on the expected branch.
-      // This catches prompt-quality failures where Rom might have switched
-      // branches, detached HEAD, or committed to main directly.
+      // ── POST-INVOCATION BRANCH VERIFICATION (worktree) ──────────────────
+      // With worktrees, verify the branch state inside the worktree, not
+      // PROJECT_DIR (which stays on main permanently).
       try {
-        const branchCheck = verifyBranchState(id, sliceBranch);
+        const wtCwd = fs.existsSync(worktreePath) ? worktreePath : PROJECT_DIR;
+        const branchCheck = verifyBranchState(id, sliceBranch, wtCwd);
         if (!branchCheck.ok) {
           log('warn', 'git_safety', {
             id,
-            msg: `Post-invocation branch check: ${branchCheck.issues.length} issue(s) — will attempt recovery`,
+            msg: `Post-invocation branch check: ${branchCheck.issues.length} issue(s)`,
             issues: branchCheck.issues,
             branch: sliceBranch,
+            worktreePath,
           });
-          // Recovery: if HEAD moved to wrong branch, try to get back
-          const currentBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-          if (currentBranch !== sliceBranch && currentBranch !== 'HEAD') {
-            log('warn', 'git_safety', { id, msg: `HEAD on ${currentBranch} instead of ${sliceBranch} — auto-committing and noting discrepancy` });
-            autoCommitDirtyTree(`post-invocation-recovery-${id}`);
-          }
         }
       } catch (verifyErr) {
         log('warn', 'git_safety', { id, msg: 'Post-invocation branch verification error (non-fatal)', error: verifyErr.message });
+      }
+      // ────────────────────────────────────────────────────────────────────
+
+      // ── Copy DONE file from worktree to PROJECT_DIR ─────────────────────
+      // Rom writes to the worktree. The evaluation pipeline reads from
+      // PROJECT_DIR/bridge/queue/. Copy so both pipelines work.
+      try {
+        if (fs.existsSync(worktreeDonePath) && !fs.existsSync(donePath)) {
+          fs.copyFileSync(worktreeDonePath, donePath);
+          log('info', 'worktree', { id, msg: 'Copied DONE file from worktree to PROJECT_DIR' });
+        }
+      } catch (copyErr) {
+        log('warn', 'worktree', { id, msg: 'Failed to copy DONE file from worktree', error: copyErr.message });
       }
       // ────────────────────────────────────────────────────────────────────
 
@@ -1813,6 +2003,24 @@ function invokeEvaluator(id) {
 
   const pickupTime = Date.now();
 
+  // ── Resolve worktree for Nog ──────────────────────────────────────────
+  // Nog needs to see the feature branch's code, not main.
+  // Try the original slice's worktree first, then recreate if needed.
+  let evalWorktreePath = getWorktreePath(id);
+  if (!fs.existsSync(evalWorktreePath) && branchName) {
+    // Worktree was cleaned up — recreate from the slice branch
+    try {
+      evalWorktreePath = createWorktree(id, branchName);
+      log('info', 'evaluator', { id, msg: `Recreated worktree for evaluation at ${evalWorktreePath}` });
+    } catch (wtErr) {
+      log('warn', 'evaluator', { id, msg: 'Could not create worktree for evaluation — falling back to PROJECT_DIR', error: wtErr.message });
+      evalWorktreePath = PROJECT_DIR;
+    }
+  } else if (!fs.existsSync(evalWorktreePath)) {
+    evalWorktreePath = PROJECT_DIR;
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   // Write nog-active.json so the dashboard can show Nog's live state.
   try {
     fs.writeFileSync(NOG_ACTIVE_FILE, JSON.stringify({
@@ -1832,7 +2040,7 @@ function invokeEvaluator(id) {
     config.claudeCommand,
     config.claudeArgs,
     {
-      cwd: PROJECT_DIR,
+      cwd: evalWorktreePath,
       encoding: 'utf-8',
       timeout: config.timeoutMs,
       maxBuffer: 10 * 1024 * 1024,
@@ -1922,7 +2130,13 @@ function invokeEvaluator(id) {
 /**
  * mergeBranch(id, branchName, title)
  *
- * FUSE-safe merge: checkout main → regression guard → merge → verify → push.
+ * Worktree-based FUSE-safe merge:
+ *   1. In the worktree: merge main into slice branch (runs on local FS, not FUSE)
+ *   2. In PROJECT_DIR: update-ref to fast-forward main to the merge result
+ *   3. Sync changed files from worktree to PROJECT_DIR via fs.copyFileSync
+ *   4. Update index with git read-tree
+ *   5. Post-merge verification + push
+ *
  * Returns { success, sha, error } where sha is the merge commit hash on success.
  */
 function mergeBranch(id, branchName, title) {
@@ -1935,10 +2149,19 @@ function mergeBranch(id, branchName, title) {
   }
 
   const commitMsg = `merge: ${branchName} — ${title || `slice ${id}`} (slice ${id})`;
-  try {
-    // ── FUSE-safe checkout main ─────────────────────────────────────────
-    fuseSafeCheckoutMain(id);
 
+  // Ensure worktree exists for the merge
+  let wtPath = getWorktreePath(id);
+  if (!fs.existsSync(wtPath)) {
+    try {
+      wtPath = createWorktree(id, branchName);
+    } catch (wtErr) {
+      log('error', 'merge', { id, msg: 'Could not create worktree for merge', error: wtErr.message });
+      return { success: false, sha: null, error: `worktree_creation_failed: ${wtErr.message}` };
+    }
+  }
+
+  try {
     // ── Truncation safety net ─────────────────────────────────────────
     // Last-resort mechanical check: if any substantial file lost >50% of
     // its content, that's almost certainly truncation damage (context
@@ -1991,13 +2214,44 @@ function mergeBranch(id, branchName, title) {
       log('info', 'merge', { id, msg: 'Truncation guard skipped — diff failed', error: guardErr.message });
     }
 
-    // ── Merge ───────────────────────────────────────────────────────────
-    execSync(`git merge --no-ff ${branchName} -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
-    const sha = execSync('git rev-parse HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    // ── Step 1: Merge main into slice branch in the worktree ───────────
+    // This runs on local FS (/tmp), not FUSE. Resolves any main changes
+    // since the branch was created.
+    const oldMain = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    execSync(`git merge main -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: wtPath, stdio: 'pipe' });
+
+    // ── Step 2: Fast-forward main to the merge result ──────────────────
+    const newSha = execSync(`git rev-parse ${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    execSync(`git update-ref refs/heads/main ${newSha}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+
+    // ── Step 3: Sync changed files from worktree to PROJECT_DIR ────────
+    // FUSE handles writes fine (writeFileSync truncates in-place).
+    const diffRaw = execSync(`git diff --name-only ${oldMain} main`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    if (diffRaw) {
+      for (const file of diffRaw.split('\n').filter(Boolean)) {
+        const srcPath = path.join(wtPath, file);
+        const dstPath = path.join(PROJECT_DIR, file);
+        try {
+          if (fs.existsSync(srcPath)) {
+            fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+            fs.copyFileSync(srcPath, dstPath);
+          } else {
+            // File deleted on branch — move to trash (FUSE-safe)
+            if (fs.existsSync(dstPath)) {
+              fs.renameSync(dstPath, path.join(TRASH_DIR, path.basename(file) + '.merge-cleanup'));
+            }
+          }
+        } catch (syncErr) {
+          log('warn', 'merge', { id, msg: `File sync failed for ${file}`, error: syncErr.message });
+        }
+      }
+    }
+
+    // ── Step 4: Update index to match new main ─────────────────────────
+    execSync('git read-tree main', { cwd: PROJECT_DIR, stdio: 'pipe' });
 
     // ── Post-merge verification ─────────────────────────────────────────
-    // FUSE may leave disk files out of sync after merge. Overwrite any
-    // that don't match the committed state.
+    // Safety net: ensure disk matches committed state.
     verifyWorkingTreeMatchesMain(id, 'merge');
 
     try {
@@ -2006,10 +2260,10 @@ function mergeBranch(id, branchName, title) {
       // Push failure is non-fatal — the merge succeeded locally.
       log('warn', 'merge', { id, msg: 'git push origin main failed (merge succeeded locally)', error: pushErr.message });
     }
-    return { success: true, sha, error: null };
+    return { success: true, sha: newSha, error: null };
   } catch (err) {
-    // Abort any in-progress merge to leave git in a clean state.
-    try { execSync('git merge --abort', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+    // Abort any in-progress merge in the worktree to leave git in a clean state.
+    try { execSync('git merge --abort', { cwd: wtPath, stdio: 'pipe' }); } catch (_) {}
     return { success: false, sha: null, error: err.stderr ? err.stderr.toString().trim() : err.message };
   }
 }
@@ -2060,6 +2314,8 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
     registerEvent(id, 'MERGED', { branch: branchName, sha: result.sha, slice_id: id });
     log('info', 'merge', { id, msg: `Merged ${branchName} to main`, branch: branchName, sha: result.sha });
     print(`${B.vert}    ${C.green}${SYM.check}${C.reset} ACCEPTED${SYM.sep}Merged ${branchName}${SYM.arrow}main (${shortSha})`);
+    // Clean up the worktree after successful merge
+    try { cleanupWorktree(id, branchName); } catch (_) {}
   } else {
     registerEvent(id, 'MERGE_FAILED', { branch: branchName, reason: result.error, slice_id: id });
     log('error', 'merge', { id, msg: `Merge failed for ${branchName}`, branch: branchName, reason: result.error });
@@ -2175,6 +2431,9 @@ function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) 
   }
 
   callReviewAPI(id, 'STUCK', reason);
+
+  // Clean up the worktree — STUCK is a terminal state (5th rejection / back to O'Brien)
+  try { cleanupWorktree(id, branchName); } catch (_) {}
 
   print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} STUCK${SYM.sep}Slice ${id} hit amendment cap (${cycle} cycles). Manual intervention required.`);
   print(`${B.bl}${B.sng.repeat(W - 1)}`);
@@ -2337,7 +2596,29 @@ function poll() {
   const doneFiles = files.filter(f => f.endsWith('-DONE.md')).sort();
   const pendingFiles = files
     .filter(f => f.endsWith('-PENDING.md'))
-    .sort(); // lexicographic = numeric FIFO given zero-padded IDs
+    .sort((a, b) => {
+      // Priority sorting: amendments (rejections) jump the queue.
+      // Read frontmatter to check for amendment_cycle or references field.
+      const isAmendmentA = (() => {
+        try {
+          const content = fs.readFileSync(path.join(QUEUE_DIR, a), 'utf-8');
+          const meta = parseFrontmatter(content);
+          return meta && (meta.type === 'amendment' || (meta.references && meta.references !== 'null'));
+        } catch (_) { return false; }
+      })();
+      const isAmendmentB = (() => {
+        try {
+          const content = fs.readFileSync(path.join(QUEUE_DIR, b), 'utf-8');
+          const meta = parseFrontmatter(content);
+          return meta && (meta.type === 'amendment' || (meta.references && meta.references !== 'null'));
+        } catch (_) { return false; }
+      })();
+      // Amendments sort before fresh slices
+      if (isAmendmentA && !isAmendmentB) return -1;
+      if (!isAmendmentA && isAmendmentB) return 1;
+      // Within same priority: lexicographic (numeric FIFO)
+      return a.localeCompare(b);
+    });
 
   // === Priority 1: Evaluate completed DONE files first ===
   // This ensures each build merges to main BEFORE the next build starts,
@@ -2721,6 +3002,9 @@ if (require.main === module) {
       maxRetries: config.maxRetries,
     },
   });
+
+  // Clean up .dead worktree/branch entries from prior sessions.
+  cleanupDeadWorktrees();
 
   const recoveryActions = crashRecovery();
   printStartupBlock(recoveryActions);
