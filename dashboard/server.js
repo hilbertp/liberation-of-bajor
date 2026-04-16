@@ -454,7 +454,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (action === 'amend' || action === 'slice') {
+    if (action === 'approve' || action === 'amend' || action === 'slice') {
       try {
         let content = fs.readFileSync(filePath, 'utf8');
         content = updateFrontmatter(content, { status: 'PENDING' });
