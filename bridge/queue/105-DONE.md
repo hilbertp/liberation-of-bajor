@@ -44,3 +44,7 @@ Implemented Nog's live active state in the Post-Build Pipeline panel. When Nog i
 ## Commit
 
 `86fae9c` — feat(105/server/dashboard): Nog active state, history pagination, /content+/unaccept routes
+
+## Branch discipline note
+
+The implementation commit `86fae9c` landed on `main` before `slice/105` was cut. The branch was created from a point after `86fae9c`, so the implementation is in the shared ancestor history — not unique to this branch. The branch's only unique commit was this DONE report. Branch discipline was not followed for this slice: the implementation should have been committed on a feature branch first, then merged to `main` after acceptance.
