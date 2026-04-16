@@ -830,6 +830,40 @@
 
   .tag-done     { background: #dcfce7; color: #166534; }
   .tag-error    { background: #fef2f2; color: #991b1b; }
+
+  /* ── Active Build error block ── */
+  .active-brief-error {
+    background: #1a0505;
+    border: 1px solid #7f1d1d;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-top: 10px;
+    color: #fca5a5;
+  }
+  .active-brief-error-reason {
+    font-weight: 600;
+    font-size: 0.95em;
+    color: #f87171;
+    margin-bottom: 6px;
+  }
+  .active-brief-error-stderr {
+    font-family: monospace;
+    font-size: 0.78em;
+    background: #0f0505;
+    border-radius: 4px;
+    padding: 8px 10px;
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #fca5a5;
+    margin-top: 6px;
+  }
+  .active-brief-error-ts {
+    font-size: 0.72em;
+    color: #9ca3af;
+    margin-top: 6px;
+  }
   .tag-pending  { background: #fef9c3; color: #854d0e; }
   .tag-progress { background: #dbeafe; color: #1e40af; }
   .tag-merge    { background: #ede9fe; color: #5b21b6; }
@@ -1972,6 +2006,38 @@
     return REASON_LABELS[raw] || raw || 'Unknown error';
   }
 
+  // ── Active Build error display ──────────────────────────────────────────
+  async function renderActiveBriefError(id) {
+    const aside = document.getElementById('active-slice-aside');
+    if (!aside) return;
+    let data = null;
+    try {
+      const res = await fetch(`/api/bridge/errors/${id}`);
+      if (res.ok) data = await res.json();
+    } catch (_) {}
+
+    if (!data) {
+      aside.innerHTML = `<div class="active-brief-error"><div class="active-brief-error-reason">Build failed</div><div style="font-size:0.82em">No error details available for slice #${escHtml(String(id))}.</div></div>`;
+      return;
+    }
+
+    const reason = humanReason(data.reason || data.error_reason);
+    const stderr = data.last_stderr || data.stderr || '';
+    const ts = data.ts || data.timestamp || '';
+    const tsStr = ts ? new Date(ts).toLocaleString() : '';
+
+    let html = `<div class="active-brief-error">`;
+    html += `<div class="active-brief-error-reason">${escHtml(reason)}</div>`;
+    if (stderr) {
+      html += `<div class="active-brief-error-stderr">${escHtml(stderr.slice(-500))}</div>`;
+    }
+    if (tsStr) {
+      html += `<div class="active-brief-error-ts">${escHtml(tsStr)}</div>`;
+    }
+    html += `</div>`;
+    aside.innerHTML = html;
+  }
+
   // Elapsed time: computed from a fixed start timestamp, no re-anchoring
   let sliceStartTime = null;
   let lastSliceId    = null;
@@ -2113,6 +2179,7 @@
       if (stageEl) stageEl.textContent = activeStageKey;
       textEl.style.display = '';
       idleEl.style.display = 'none';
+      document.getElementById('active-slice-aside').innerHTML = '';
       progressBar.style.display = (heartbeat.status === 'processing') ? '' : 'none';
 
       // Invocation gap indicator: visible only during IN_PROGRESS with no first output yet
@@ -2146,11 +2213,23 @@
       const primaryEl   = idleEl.querySelector('.active-slice-idle-primary');
       const secondaryEl = idleEl.querySelector('.active-slice-idle-secondary');
 
-      if (stagedItemCount > 0) {
+      // Check if last slice was an error
+      const lastError = recent && recent.length > 0 && (recent[0].outcome === 'ERROR');
+
+      if (lastError) {
+        const last = recent[0];
+        primaryEl.textContent = `Slice #${last.id} failed \u2014 ${last.title || 'Untitled'}`;
+        primaryEl.className = 'active-slice-idle-primary';
+        primaryEl.style.color = '#f87171';
+        secondaryEl.textContent = humanReason(last.reason || last.error_reason || '');
+        secondaryEl.style.color = '#fca5a5';
+        renderActiveBriefError(last.id);
+      } else if (stagedItemCount > 0) {
         // Idle A — staged items awaiting acceptance
         primaryEl.textContent = `${stagedItemCount} slice${stagedItemCount !== 1 ? 's' : ''} awaiting your approval`;
         primaryEl.className = 'active-slice-idle-primary warning';
         secondaryEl.textContent = 'Accept below to start the next build \u2192';
+        document.getElementById('active-slice-aside').innerHTML = '';
       } else if (recent && recent.length > 0) {
         // Idle B — last completed, nothing staged
         const last = recent[0];
@@ -2166,11 +2245,18 @@
         } else {
           secondaryEl.textContent = 'All clear';
         }
+        document.getElementById('active-slice-aside').innerHTML = '';
       } else {
         // Idle C — no history at all
         primaryEl.textContent = 'All clear';
         primaryEl.className = 'active-slice-idle-primary';
         secondaryEl.textContent = 'No active build, nothing pending';
+        document.getElementById('active-slice-aside').innerHTML = '';
+      }
+
+      if (!lastError) {
+        primaryEl.style.color = '';
+        secondaryEl.style.color = '';
       }
 
       idleEl.style.display = '';
@@ -2362,6 +2448,9 @@
       const errorReasonHtml = isError && c.reason
         ? `<div style="color:#dc2626;font-size:0.82em;margin-top:2px">${escHtml(humanReason(c.reason))}</div>`
         : '';
+      const expandDesc = isError && c.reason
+        ? humanReason(c.reason)
+        : firstSentence;
 
       return `<div class="history-row" data-history-id="${eid}" style="${rowStyle}">
         <div class="history-row-main">
@@ -2372,7 +2461,7 @@
           ${statusHtml}
         </div>${errorReasonHtml}
         <div class="history-expand ${isExpanded ? 'open' : ''}" id="history-expand-${eid}">
-          <span class="history-expand-desc">${escHtml(firstSentence)}</span>
+          <span class="history-expand-desc" ${isError ? 'style="color:#dc2626"' : ''}>${escHtml(expandDesc)}</span>
           <button class="history-details-btn" onclick="openHistoryDetail('${eid}')">Details ›</button>
         </div>
       </div>`;
@@ -2433,11 +2522,13 @@
     document.getElementById('history-detail-id').textContent = `#${id}`;
     document.getElementById('history-detail-title').textContent = item.title || 'Untitled';
 
+    const isError = (item.outcome ?? 'DONE') === 'ERROR';
+
     // Context bar
     const ctxItems = [
       { label: 'Sprint', value: sprint ? `Sprint ${sprint}` : '\u2014' },
       { label: 'Builder', value: 'O\u2019Brien' },
-      { label: 'Outcome', value: 'Merged' },
+      { label: 'Outcome', value: isError ? 'Error' : 'Merged' },
       { label: 'Duration', value: dur },
       { label: 'Tokens', value: tokStr },
       { label: 'Cost', value: costStr },
@@ -2478,6 +2569,32 @@
     } catch (_) {}
 
     let html = '';
+    const detailIsError = (item.outcome ?? 'DONE') === 'ERROR';
+
+    // ── Error detail section (for ERROR slices) ──
+    if (detailIsError) {
+      html += '<div class="slice-rendered-section"><div class="slice-rendered-section-label" style="color:#dc2626">Error Details</div><div class="slice-rendered-section-content">';
+      html += `<p style="color:#dc2626;font-weight:600">${escHtml(humanReason(item.reason || item.error_reason || ''))}</p>`;
+
+      // Fetch error detail from API
+      let errData = null;
+      try {
+        const errRes = await fetch(`/api/bridge/errors/${item.id}`);
+        if (errRes.ok) errData = await errRes.json();
+      } catch (_) {}
+
+      if (errData) {
+        const stderr = errData.last_stderr || errData.stderr || '';
+        if (stderr) {
+          html += `<pre style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px;border-radius:6px;font-size:12px;max-height:200px;overflow-y:auto;white-space:pre-wrap">${escHtml(stderr.slice(-1000))}</pre>`;
+        }
+        const errTs = errData.ts || errData.timestamp || '';
+        if (errTs) {
+          html += `<p style="color:#9ca3af;font-size:0.82em">Failed at ${escHtml(new Date(errTs).toLocaleString())}</p>`;
+        }
+      }
+      html += '</div></div>';
+    }
 
     // ── Original prompt section ──
     html += '<div class="slice-rendered-section"><div class="slice-rendered-section-label">Original prompt</div><div class="slice-rendered-section-content">';
