@@ -1,16 +1,16 @@
 {
-  "ts": "2026-04-16T00:34:07.928Z",
-  "status": "evaluating",
-  "current_slice": "117",
+  "ts": "2026-04-16T00:39:48.356Z",
+  "status": "idle",
+  "current_slice": null,
   "current_slice_title": null,
-  "current_slice_goal": "Active Build panel has no stage pill bar and the elapsed timer works correctly.",
-  "slice_elapsed_seconds": 14,
+  "current_slice_goal": null,
+  "slice_elapsed_seconds": null,
   "last_activity_ts": null,
-  "processed_total": 1,
+  "processed_total": 2,
   "queue": {
-    "waiting": 0,
-    "active": 0,
+    "waiting": 1,
+    "active": 1,
     "done": 14,
-    "error": 7
+    "error": 8
   }
 }
