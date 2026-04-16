@@ -937,35 +937,103 @@ function verifyBranchState(id, expectedBranch, cwd) {
 }
 
 /**
+ * clearStaleGitLocks()
+ *
+ * Removes git lock files that may have been left by a prior crash.
+ * Safe to call unconditionally at startup — git creates these atomically
+ * and a missing lock file is equivalent to no lock.
+ */
+function clearStaleGitLocks() {
+  const lockFiles = [
+    path.join(PROJECT_DIR, '.git', 'index.lock'),
+    path.join(PROJECT_DIR, '.git', 'MERGE_HEAD'),
+    path.join(PROJECT_DIR, '.git', 'MERGE_MSG'),
+    path.join(PROJECT_DIR, '.git', 'MERGE_MODE'),
+    path.join(PROJECT_DIR, '.git', 'ORIG_HEAD.lock'),
+    path.join(PROJECT_DIR, '.git', 'COMMIT_EDITMSG.lock'),
+  ];
+  for (const f of lockFiles) {
+    try {
+      if (fs.existsSync(f)) {
+        fs.unlinkSync(f);
+        log('info', 'startup', { msg: `Removed stale git lock: ${path.basename(f)}` });
+      }
+    } catch (err) {
+      log('warn', 'startup', { msg: `Could not remove stale lock ${path.basename(f)}`, error: err.message });
+    }
+  }
+  // If there was a stuck merge, abort it
+  try {
+    execSync('git merge --abort', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    log('info', 'startup', { msg: 'Aborted in-progress merge left from prior run' });
+  } catch (_) {
+    // No merge in progress — expected
+  }
+}
+
+/**
+ * selfRestart(reason)
+ *
+ * Spawns a fresh copy of the watcher process and exits this one.
+ * Used when a hard-reset or lock-clearing operation needs a clean process state.
+ */
+function selfRestart(reason) {
+  log('warn', 'self_restart', { msg: `Restarting watcher: ${reason}` });
+  const { spawn } = require('child_process');
+  const child = spawn(process.execPath, process.argv.slice(1), {
+    detached: true,
+    stdio: 'inherit',
+    cwd: process.cwd(),
+  });
+  child.unref();
+  process.exit(0);
+}
+
+/**
  * ensureMainIsFresh(id)
  *
  * Fetches from origin and fast-forwards local main so the branch we're
  * about to create includes all remote work. If the fetch fails (offline,
  * no remote), log a warning but continue — local main is still valid.
+ * If local main has diverged from origin, hard-resets to origin/main and
+ * triggers a self-restart to ensure clean process state.
  */
 function ensureMainIsFresh(id) {
   try {
     execSync('git fetch origin main', { cwd: PROJECT_DIR, stdio: 'pipe', timeout: 15000 });
-    const local  = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-    const remote = execSync('git rev-parse origin/main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-
-    if (local !== remote) {
-      // Fast-forward local main to match remote (safe — we're on main after fuseSafeCheckoutMain)
-      execSync('git merge --ff-only origin/main', { cwd: PROJECT_DIR, stdio: 'pipe' });
-      const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-      log('info', 'git_safety', {
-        id,
-        msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}`,
-      });
-    } else {
-      log('info', 'git_safety', { id, msg: 'main is up to date with origin' });
-    }
   } catch (err) {
+    log('warn', 'git_safety', { id, msg: 'fetch origin/main failed — proceeding with local main', error: err.message });
+    return;
+  }
+
+  const local  = execSync('git rev-parse main',        { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  const remote = execSync('git rev-parse origin/main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+
+  if (local === remote) {
+    log('info', 'git_safety', { id, msg: 'main is up to date with origin' });
+    return;
+  }
+
+  // Check if local has commits not on origin (diverged)
+  const ahead = execSync('git log origin/main..main --oneline', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+
+  if (ahead) {
+    // Diverged — discard local-only commits and hard-reset to origin
+    const aheadList = ahead.split('\n').map(l => l.trim()).filter(Boolean);
     log('warn', 'git_safety', {
       id,
-      msg: 'Could not fetch origin/main — proceeding with local main',
-      error: err.message,
+      msg: `main has diverged from origin (${aheadList.length} local-only commit(s)) — hard-resetting to origin/main`,
+      discarded: aheadList,
     });
+    execSync('git reset --hard origin/main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    log('info', 'git_safety', { id, msg: `Hard-reset complete: main now at ${after.slice(0, 8)}` });
+    selfRestart(`main was diverged and has been hard-reset to origin/main at ${after.slice(0, 8)}`);
+  } else {
+    // Local is behind origin — safe fast-forward
+    execSync('git merge --ff-only origin/main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    log('info', 'git_safety', { id, msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}` });
   }
 }
 
@@ -1338,9 +1406,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
   // ──────────────────────────────────────────────────────────────────────────
   let worktreePath;
   try {
-    if (!isAmendment) {
-      ensureMainIsFresh(id);
-    }
+    ensureMainIsFresh(id);
     worktreePath = createWorktree(id, sliceBranch);
     log('info', 'branch', { id, msg: `Worktree ready at ${worktreePath} on branch ${sliceBranch}`, isAmendment });
   } catch (err) {
@@ -3543,6 +3609,9 @@ if (require.main === module) {
       maxRetries: config.maxRetries,
     },
   });
+
+  // Remove stale git lock files from prior crashes before any git operations.
+  clearStaleGitLocks();
 
   // Clean up .dead worktree/branch entries from prior sessions.
   cleanupDeadWorktrees();
