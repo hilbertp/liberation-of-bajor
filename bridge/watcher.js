@@ -2268,58 +2268,6 @@ function mergeBranch(id, branchName, title) {
   }
 
   try {
-    // ── Truncation safety net ─────────────────────────────────────────
-    // Last-resort mechanical check: if any substantial file lost >50% of
-    // its content, that's almost certainly truncation damage (context
-    // compaction, FUSE partial write), not a deliberate change. Block it.
-    //
-    // Scope discipline (was the work in scope? were out-of-scope files
-    // touched?) is Nog's job — he gets the full file diff in his prompt.
-    // This guard only catches catastrophic data loss that Nog can't see.
-    try {
-      const changedFiles = execSync(`git diff --name-only main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-      if (changedFiles) {
-        const truncated = [];
-        for (const file of changedFiles.split('\n').filter(Boolean)) {
-          try {
-            const mainLines = parseInt(execSync(
-              `git show main:${file} | wc -l`,
-              { cwd: PROJECT_DIR, encoding: 'utf-8' }
-            ).trim(), 10);
-            const branchLines = parseInt(execSync(
-              `git show ${branchName}:${file} | wc -l`,
-              { cwd: PROJECT_DIR, encoding: 'utf-8' }
-            ).trim(), 10);
-            if (mainLines > 50 && branchLines < mainLines * 0.5) {
-              const pct = Math.round((1 - branchLines / mainLines) * 100);
-              truncated.push({ file, mainLines, branchLines, pct });
-            }
-          } catch (_) {}
-        }
-
-        if (truncated.length > 0) {
-          const summary = truncated.map(r => `${r.file}: ${r.pct}% lost (${r.branchLines} vs ${r.mainLines})`).join('; ');
-          log('warn', 'merge', {
-            id,
-            msg: `Truncation guard BLOCK: ${truncated.length} file(s) lost >50% content`,
-            branchName,
-            truncated,
-          });
-          registerEvent(id, 'MERGE_FAILED', {
-            reason: `truncation_guard: ${summary}`,
-            branch: branchName,
-          });
-          print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} MERGE BLOCKED${SYM.sep}${truncated.length} file(s) lost >50% content — likely truncation`);
-          for (const r of truncated) {
-            print(`${B.vert}    ${C.yellow}⚠${C.reset}  ${r.file}: ${r.pct}% lost (${r.branchLines} vs ${r.mainLines} lines)`);
-          }
-          return { success: false, sha: null, error: 'truncation_guard' };
-        }
-      }
-    } catch (guardErr) {
-      log('info', 'merge', { id, msg: 'Truncation guard skipped — diff failed', error: guardErr.message });
-    }
-
     // ── Step 1: Merge main into slice branch in the worktree ───────────
     // This runs on local FS (/tmp), not FUSE. Resolves any main changes
     // since the branch was created.

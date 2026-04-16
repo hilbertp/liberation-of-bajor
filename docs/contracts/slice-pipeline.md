@@ -237,11 +237,26 @@ O'Brien, on picking the slice back up in STAGED, reads the full history (origina
 
 ---
 
-## 11. Merge safety: the truncation guard
+## 11. Pre-merge safety (retired)
 
-Before the watcher performs `git merge --no-ff slice/{id}`, it diffs each file touched by the slice against its pre-merge version on `main`. If any file's byte count drops by more than a configured threshold (currently ~30%) as a result of the merge, the watcher emits `MERGE_FAILED` with `reason: "truncation_guard"` and leaves `main` untouched. The slice stays in ACCEPTED on disk; O'Brien commissions an amendment slice to land the change additively.
+*Retired in slice 144.*
 
-This is how slice 138 was caught and why slice 139 had to be restructured as an additive deprecation rather than a file replacement.
+The watcher formerly ran a "truncation guard" before every merge: it diffed each file touched by the slice against `main` and blocked the merge if any file with >50 lines lost more than 50% of its content, emitting `MERGE_FAILED` with `reason: "truncation_guard"`.
+
+**Original design intent.** The guard targeted three hypothesised failure modes: (1) FUSE partial-writes at checkout, (2) stale-base overwrites when agents forked from an outdated `main`, and (3) LLM context compaction silently truncating files mid-edit.
+
+**Why each mode is no longer a concern.**
+- *FUSE partial-write* — eliminated by the worktree migration. Slice builds run on local-FS worktrees at `/private/tmp/ds9-worktrees/`, not on the FUSE mount.
+- *Stale-base overwrite* — eliminated by watcher-owned branching. No agent creates or switches branches; the watcher is the sole owner of all git operations.
+- *LLM context compaction* — never observed. `compaction_occurred` has been tracked since slice 054; all values across ~140 slices are `false` or `null`. Rom's Write/Edit tool calls are atomic from the guard's perspective.
+
+**Observed firings — both false positives.**
+- Slice 138 (2026-04-16T17:51:49Z): blocked an intentional deletion of `docs/contracts/queue-lifecycle.md` (127 → 6 lines).
+- Slice 142 (2026-04-16T20:33:25Z): blocked an intentional deletion of `docs/contracts/brief-format.md` (146 → 0 lines).
+
+Both firings forced an additive-stub workaround instead of a clean deletion. The guard was pure overhead blocking legitimate refactors.
+
+**Remaining semantic check.** Nog reviews the full file diff before any merge is accepted. This is the appropriate layer for catching unintended deletions — a human-readable review, not a mechanical line-count heuristic.
 
 ---
 
