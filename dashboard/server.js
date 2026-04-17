@@ -249,7 +249,7 @@ function buildBridgeData() {
         ? 'ACCEPTED' : entry.outcome;
       let reviewStatus;
       if (verdict === 'ACCEPTED')                reviewStatus = 'accepted';
-      else if (verdict === 'AMENDMENT_REQUIRED') reviewStatus = '(approve|slice|amend|reject|update-body)ment_required';
+      else if (verdict === 'AMENDMENT_REQUIRED') reviewStatus = 'amendment_required';
       else if (acceptedSet.has(entry.id))        reviewStatus = 'accepted';
       else                                       reviewStatus = 'waiting_for_review';
       return { ...entry, outcome: finalOutcome, reviewStatus, sprint: getSprintForId(entry.id) };

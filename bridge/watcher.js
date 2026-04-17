@@ -2269,6 +2269,14 @@ function mergeBranch(id, branchName, title) {
     }
   }
 
+  // ── Layer 2 enforcement: unlock source paths before merge, re-lock after ──
+  const unlockScript = path.join(PROJECT_DIR, 'scripts', 'unlock-main.sh');
+  const lockScript   = path.join(PROJECT_DIR, 'scripts', 'lock-main.sh');
+  try { execSync(`bash "${unlockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+
+  // Set DS9_WATCHER_MERGE so the pre-commit hook (Layer 1) allows this path.
+  process.env.DS9_WATCHER_MERGE = '1';
+
   try {
     // ── Step 1: Merge main into slice branch in the worktree ───────────
     // This runs on local FS (/tmp), not FUSE. Resolves any main changes
@@ -2321,6 +2329,10 @@ function mergeBranch(id, branchName, title) {
     // Abort any in-progress merge in the worktree to leave git in a clean state.
     try { execSync('git merge --abort', { cwd: wtPath, stdio: 'pipe' }); } catch (_) {}
     return { success: false, sha: null, error: err.stderr ? err.stderr.toString().trim() : err.message };
+  } finally {
+    // Always re-lock and clear the env var, even on failure.
+    delete process.env.DS9_WATCHER_MERGE;
+    try { execSync(`bash "${lockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
   }
 }
 
