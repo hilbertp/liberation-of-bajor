@@ -1,0 +1,8 @@
+{
+  "name": "liberation-of-bajor",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "reconcile:register": "node scripts/reconcile-register.js"
+  }
+}
