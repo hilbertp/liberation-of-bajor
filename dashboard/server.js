@@ -777,6 +777,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Pause / Resume / Abort (write control files for watcher) ─────────────
+  const controlMatch = pathname.match(/^\/api\/bridge\/(pause|resume|abort)\/(\d+)$/);
+  if (controlMatch && req.method === 'POST') {
+    const action = controlMatch[1];
+    const id = controlMatch[2];
+    if (!fs.existsSync(CONTROL_DIR)) fs.mkdirSync(CONTROL_DIR, { recursive: true });
+    const controlFile = path.join(CONTROL_DIR, `${action}-${id}-${Date.now()}.json`);
+    try {
+      fs.writeFileSync(controlFile, JSON.stringify({ action, slice_id: id }), 'utf8');
+      writeRegisterEvent({ event: `${action.toUpperCase()}_REQUESTED`, id, source: 'dashboard' });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
   // ── Slice frontmatter endpoint (for rounds[] and total_* fields) ─────────
   const sliceFmMatch = pathname.match(/^\/api\/slice\/(\d+)\/frontmatter$/);
   if (sliceFmMatch && req.method === 'GET') {

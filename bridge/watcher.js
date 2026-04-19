@@ -1508,6 +1508,13 @@ let idlePrintCounter = 0;
 let sessionHasProcessed = false;
 
 // ---------------------------------------------------------------------------
+// Active child process tracking — keyed by slice ID.
+// Used by pause/resume/abort control actions.
+// ---------------------------------------------------------------------------
+
+const activeChildren = new Map(); // Map<sliceId: string, { child: ChildProcess, worktreePath: string }>
+
+// ---------------------------------------------------------------------------
 // Rom invocation
 // ---------------------------------------------------------------------------
 
@@ -2001,6 +2008,9 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
         }
       }
 
+      // Remove from active children map.
+      activeChildren.delete(String(id));
+
       // Reset processing state.
       processing = false;
       heartbeatState.status = 'idle';
@@ -2013,6 +2023,9 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
       writeHeartbeat();
     }
   );
+
+  // Track child process for pause/resume/abort.
+  activeChildren.set(String(id), { child, worktreePath });
 
   // Activity listeners: update lastActivityTs on any stdout/stderr output.
   // These run in addition to execFile's internal buffering — no conflict.
@@ -3506,6 +3519,189 @@ function handleReturnToStage(sliceId) {
   return { ok: true };
 }
 
+// ---------------------------------------------------------------------------
+// Pause / Resume / Abort helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * getLatestRegisterEvent(sliceId)
+ *
+ * Returns the latest register event for a given slice ID, or null.
+ */
+function getLatestRegisterEvent(sliceId) {
+  const id = String(sliceId);
+  try {
+    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        if (entry.id === id) return entry;
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
+ * getRoundFromRegister(sliceId)
+ *
+ * Derives the current round for a slice from COMMISSIONED events in the register.
+ */
+function getRoundFromRegister(sliceId) {
+  const id = String(sliceId);
+  let count = 0;
+  let lastRound = null;
+  try {
+    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (entry.id === id && entry.event === 'COMMISSIONED') {
+          count++;
+          if (entry.round != null) lastRound = parseInt(entry.round, 10);
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return lastRound || count || 1;
+}
+
+/**
+ * handlePause(sliceId) — SIGSTOP the Rom subprocess for a slice.
+ */
+function handlePause(sliceId) {
+  const id = String(sliceId);
+
+  // Precondition: slice must be IN_PROGRESS with a live child.
+  if (!fs.existsSync(path.join(QUEUE_DIR, `${id}-IN_PROGRESS.md`))) {
+    return { ok: false, error: `Slice ${id} is not IN_PROGRESS — cannot pause` };
+  }
+
+  const entry = activeChildren.get(id);
+  if (!entry || !entry.child || entry.child.exitCode !== null) {
+    return { ok: false, error: `Slice ${id} has no live Rom subprocess — cannot pause` };
+  }
+
+  // Check not already paused.
+  const latest = getLatestRegisterEvent(id);
+  if (latest && latest.event === 'ROM_PAUSED') {
+    return { ok: false, error: `Slice ${id} is already paused` };
+  }
+
+  try {
+    process.kill(entry.child.pid, 'SIGSTOP');
+  } catch (err) {
+    return { ok: false, error: `Failed to SIGSTOP slice ${id}: ${err.message}` };
+  }
+
+  const round = getRoundFromRegister(id);
+  registerEvent(id, 'ROM_PAUSED', { round });
+  log('info', 'control', { id, msg: `Paused Rom subprocess (PID ${entry.child.pid})`, round });
+  print(`  ${C.cyan}${SYM.back}${C.reset} Pause${SYM.sep}Slice ${id} paused (round ${round})`);
+
+  return { ok: true };
+}
+
+/**
+ * handleResume(sliceId) — SIGCONT the Rom subprocess for a slice.
+ */
+function handleResume(sliceId) {
+  const id = String(sliceId);
+
+  // Precondition: latest event must be ROM_PAUSED.
+  const latest = getLatestRegisterEvent(id);
+  if (!latest || latest.event !== 'ROM_PAUSED') {
+    return { ok: false, error: `Slice ${id} is not paused — cannot resume` };
+  }
+
+  const entry = activeChildren.get(id);
+  if (!entry || !entry.child || entry.child.exitCode !== null) {
+    return { ok: false, error: `Slice ${id} has no live Rom subprocess — cannot resume (child may have died while paused)` };
+  }
+
+  try {
+    process.kill(entry.child.pid, 'SIGCONT');
+  } catch (err) {
+    return { ok: false, error: `Failed to SIGCONT slice ${id}: ${err.message}` };
+  }
+
+  const round = getRoundFromRegister(id);
+  registerEvent(id, 'ROM_RESUMED', { round });
+  log('info', 'control', { id, msg: `Resumed Rom subprocess (PID ${entry.child.pid})`, round });
+  print(`  ${C.cyan}${SYM.back}${C.reset} Resume${SYM.sep}Slice ${id} resumed (round ${round})`);
+
+  return { ok: true };
+}
+
+/**
+ * handleAbort(sliceId) — SIGKILL the Rom subprocess, clean up, return to STAGED.
+ */
+function handleAbort(sliceId) {
+  const id = String(sliceId);
+
+  // Precondition: slice must be IN_PROGRESS (active or paused).
+  const inProgressPath = path.join(QUEUE_DIR, `${id}-IN_PROGRESS.md`);
+  if (!fs.existsSync(inProgressPath)) {
+    return { ok: false, error: `Slice ${id} is not IN_PROGRESS — cannot abort` };
+  }
+
+  const entry = activeChildren.get(id);
+  if (entry && entry.child && entry.child.exitCode === null) {
+    // If paused, resume first so SIGKILL is delivered immediately.
+    const latest = getLatestRegisterEvent(id);
+    if (latest && latest.event === 'ROM_PAUSED') {
+      try { process.kill(entry.child.pid, 'SIGCONT'); } catch (_) {}
+    }
+    try {
+      process.kill(entry.child.pid, 'SIGKILL');
+    } catch (err) {
+      log('warn', 'control', { id, msg: `Failed to SIGKILL Rom subprocess: ${err.message}` });
+    }
+  }
+
+  // Clean up worktree.
+  const worktreePath = entry ? entry.worktreePath : getWorktreePath(id);
+  try {
+    cleanupWorktree(id, `slice/${id}`);
+  } catch (err) {
+    log('warn', 'control', { id, msg: `Worktree cleanup failed during abort: ${err.message}` });
+  }
+
+  // Move slice back to STAGED.
+  let content;
+  try {
+    content = fs.readFileSync(inProgressPath, 'utf-8');
+  } catch (err) {
+    return { ok: false, error: `Failed to read IN_PROGRESS file for slice ${id}: ${err.message}` };
+  }
+
+  const updatedContent = updateFrontmatter(content, { status: 'STAGED' });
+  const stagedPath = path.join(STAGED_DIR, `${id}-STAGED.md`);
+  try {
+    fs.writeFileSync(stagedPath, updatedContent);
+    fs.unlinkSync(inProgressPath);
+  } catch (err) {
+    return { ok: false, error: `Failed to move slice ${id} to staged: ${err.message}` };
+  }
+
+  // Remove from active children and reset processing.
+  activeChildren.delete(id);
+  processing = false;
+  heartbeatState.status = 'idle';
+  heartbeatState.current_slice = null;
+  heartbeatState.current_slice_title = null;
+  heartbeatState.current_slice_goal = null;
+  heartbeatState.pickupTime = null;
+  writeHeartbeat();
+
+  const round = getRoundFromRegister(id);
+  registerEvent(id, 'ROM_ABORTED', { round, reason: 'manual' });
+  log('info', 'control', { id, msg: `Aborted Rom subprocess — slice returned to STAGED`, round });
+  print(`  ${C.cyan}${SYM.back}${C.reset} Abort${SYM.sep}Slice ${id} aborted (round ${round})${SYM.arrow}STAGED`);
+
+  return { ok: true };
+}
+
 /**
  * processControlFiles()
  *
@@ -3541,15 +3737,24 @@ function processControlFiles() {
       continue;
     }
 
+    let result;
     if (action === 'return_to_stage') {
-      const result = handleReturnToStage(sliceId);
-      if (!result.ok) {
-        log('warn', 'control', { file, action, sliceId, msg: result.error });
-      } else {
-        log('info', 'control', { file, action, sliceId, msg: 'return_to_stage completed' });
-      }
+      result = handleReturnToStage(sliceId);
+    } else if (action === 'pause') {
+      result = handlePause(sliceId);
+    } else if (action === 'resume') {
+      result = handleResume(sliceId);
+    } else if (action === 'abort') {
+      result = handleAbort(sliceId);
     } else {
       log('warn', 'control', { file, msg: `Unknown control action: ${action}`, action, sliceId });
+      result = null;
+    }
+
+    if (result && !result.ok) {
+      log('warn', 'control', { file, action, sliceId, msg: result.error });
+    } else if (result) {
+      log('info', 'control', { file, action, sliceId, msg: `${action} completed` });
     }
 
     // Consume the control file regardless of success/failure.
@@ -3562,10 +3767,10 @@ function processControlFiles() {
 // ---------------------------------------------------------------------------
 
 function poll() {
-  if (processing) return;
-
-  // Process control files (return-to-stage, etc.) before dispatch.
+  // Always process control files — pause/resume/abort must work even while processing.
   processControlFiles();
+
+  if (processing) return;
 
   // Rate limit gate: pause dispatch until the API limit resets.
   if (rateLimitUntil) {
@@ -3986,18 +4191,40 @@ function crashRecovery() {
         log('warn', 'startup_recovery', { id, msg: 'Failed to delete orphaned IN_PROGRESS', error: err.message });
       }
     } else {
-      // No resolution file — slice was interrupted mid-flight. Re-queue it.
-      const queuedPath = path.join(QUEUE_DIR, `${id}-QUEUED.md`);
-      try {
-        fs.renameSync(inProgressPath, queuedPath);  // atomic rename
+      // Check if slice was paused when the watcher restarted.
+      const latestEvent = getLatestRegisterEvent(id);
+      if (latestEvent && latestEvent.event === 'ROM_PAUSED') {
+        // Slice was paused — leave it IN_PROGRESS but block new dispatches.
+        // The child process is gone (watcher restarted), so emit a
+        // paused_child_died error so the UI can prompt Abort + re-stage.
+        processing = true;
+        heartbeatState.status = 'processing';
+        heartbeatState.current_slice = id;
+        registerEvent(id, 'ERROR', {
+          phase: 'paused_child_died',
+          reason: 'Watcher restarted while slice was paused — child process lost',
+          stderr_tail: '',
+        });
         log('info', 'startup_recovery', {
           id,
-          msg: 'Orphaned IN_PROGRESS renamed to QUEUED (re-queued)',
-          action: 're-queued',
+          msg: 'Paused slice found on restart — child lost, ERROR emitted. Awaiting Resume/Abort.',
+          action: 'paused_orphan',
         });
-        actions.push({ id, type: 'requeued' });
-      } catch (err) {
-        log('warn', 'startup_recovery', { id, msg: 'Failed to rename orphaned IN_PROGRESS to QUEUED', error: err.message });
+        actions.push({ id, type: 'paused_orphan' });
+      } else {
+        // No resolution file — slice was interrupted mid-flight. Re-queue it.
+        const queuedPath = path.join(QUEUE_DIR, `${id}-QUEUED.md`);
+        try {
+          fs.renameSync(inProgressPath, queuedPath);  // atomic rename
+          log('info', 'startup_recovery', {
+            id,
+            msg: 'Orphaned IN_PROGRESS renamed to QUEUED (re-queued)',
+            action: 're-queued',
+          });
+          actions.push({ id, type: 'requeued' });
+        } catch (err) {
+          log('warn', 'startup_recovery', { id, msg: 'Failed to rename orphaned IN_PROGRESS to QUEUED', error: err.message });
+        }
       }
     }
   }

@@ -1713,7 +1713,7 @@
   .outcome-escalated    { background: #dbeafe; color: #1e40af; }
   .outcome-error        { background: #fef2f2; color: #991b1b; }
 
-  /* ── PAUSE BUTTON (disabled, UI2) ────────────────────── */
+  /* ── PAUSE BUTTON ────────────────────────────────────── */
   .pause-build-btn {
     display: inline-flex;
     align-items: center;
@@ -1722,29 +1722,21 @@
     font-size: 13px;
     font-weight: 500;
     font-family: system-ui, -apple-system, sans-serif;
-    color: #9ca3af;
+    color: #6b7280;
     background: #f9fafb;
     border: 1px solid #d1d5db;
     border-radius: 6px;
-    cursor: not-allowed;
-    opacity: 0.6;
+    cursor: pointer;
     position: relative;
   }
-  .pause-build-btn .pause-tooltip {
-    display: none;
-    position: absolute;
-    bottom: calc(100% + 6px);
-    right: 0;
-    background: #1f2937;
-    color: #e5e7eb;
-    font-size: 11px;
-    padding: 6px 10px;
-    border-radius: 6px;
-    white-space: nowrap;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-    z-index: 10;
+  .pause-build-btn:hover {
+    background: #f3f4f6;
+    color: #374151;
   }
-  .pause-build-btn:hover .pause-tooltip { display: block; }
+  .pause-build-btn:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
 
   /* ── PAUSED FOOTER (CSS only, UI2 wires behavior) ──── */
   .paused-footer {
@@ -2133,16 +2125,19 @@
         <!-- Footer: builder + pause button (only during active) -->
         <div class="active-slice-footer" id="active-slice-footer" style="display:none">
           <span class="active-slice-builder">Rom &middot; Backend Engineer</span>
-          <button class="pause-build-btn" disabled>
+          <button class="pause-build-btn" onclick="pauseBuild()">
             &#9208; Pause
-            <span class="pause-tooltip">Pause/resume coming in UI2</span>
           </button>
         </div>
 
-        <!-- Paused footer (CSS-ready for UI2, not reachable yet) -->
+        <!-- Paused footer: Resume + Abort with inline confirmation -->
         <div class="paused-footer" id="paused-footer" style="display:none">
-          <button class="resume-btn" disabled>&#9654; Resume</button>
-          <button class="abort-btn" disabled>&#10005; Abort</button>
+          <button class="resume-btn" onclick="resumeBuild()">&#9654; Resume</button>
+          <button class="abort-btn" id="abort-btn" onclick="showAbortConfirm()">&#10005; Abort</button>
+          <span id="abort-confirm" style="display:none;margin-left:8px;font-size:13px;color:#dc2626">
+            Abort? <button onclick="confirmAbort()" style="color:#dc2626;background:#fef2f2;border:1px solid #dc2626;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;margin-left:4px">Yes</button>
+            <button onclick="cancelAbort()" style="color:#6b7280;background:#f9fafb;border:1px solid #d1d5db;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;margin-left:2px">Cancel</button>
+          </span>
         </div>
       </div>
       <div class="active-slice-aside" id="active-slice-aside"></div>
@@ -2388,9 +2383,13 @@
   // Current active mission info (for stop dialog)
   let currentMission = null;
 
+  // Pause state: when non-null, the timer is frozen
+  let frozenElapsed = null;
+
   function startElapsedTick() {
     setInterval(() => {
       if (sliceStartTime == null) return;
+      if (frozenElapsed != null) return; // paused — don't update
       const elapsed = Math.floor((Date.now() - sliceStartTime) / 1000);
       const el = document.getElementById('mission-elapsed');
       if (el) el.textContent = fmtElapsed(elapsed);
@@ -2402,6 +2401,70 @@
     const s = secs % 60;
     const pad = n => String(n).padStart(2, '0');
     return `${m}m ${pad(s)}s`;
+  }
+
+  // ── Pause / Resume / Abort controls ─────────────────────────────────────
+  async function pauseBuild() {
+    if (!currentMission) return;
+    const btn = document.querySelector('.pause-build-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Pausing\u2026'; }
+    try {
+      const res = await fetch(`/api/bridge/pause/${currentMission.id}`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error('Pause failed:', data.error || res.statusText);
+      }
+    } catch (err) {
+      console.error('Pause request failed:', err);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '\u23F8 Pause'; }
+  }
+
+  async function resumeBuild() {
+    if (!currentMission) return;
+    const btn = document.querySelector('.resume-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Resuming\u2026'; }
+    try {
+      await fetch(`/api/bridge/resume/${currentMission.id}`, { method: 'POST' });
+    } catch (err) {
+      console.error('Resume request failed:', err);
+    }
+    if (btn) { btn.disabled = false; btn.textContent = '\u25B6 Resume'; }
+  }
+
+  function showAbortConfirm() {
+    const confirm = document.getElementById('abort-confirm');
+    const btn = document.getElementById('abort-btn');
+    if (confirm) confirm.style.display = '';
+    if (btn) btn.style.display = 'none';
+  }
+
+  function cancelAbort() {
+    const confirm = document.getElementById('abort-confirm');
+    const btn = document.getElementById('abort-btn');
+    if (confirm) confirm.style.display = 'none';
+    if (btn) btn.style.display = '';
+  }
+
+  async function confirmAbort() {
+    if (!currentMission) return;
+    cancelAbort();
+    try {
+      await fetch(`/api/bridge/abort/${currentMission.id}`, { method: 'POST' });
+    } catch (err) {
+      console.error('Abort request failed:', err);
+    }
+  }
+
+  /**
+   * isSlicePaused(sliceId) — checks register events for active ROM_PAUSED state.
+   */
+  function isSlicePaused(sliceId) {
+    const sid = String(sliceId);
+    const relevant = cachedRegisterEvents.filter(e => String(e.id) === sid &&
+      ['ROM_PAUSED', 'ROM_RESUMED', 'ROM_ABORTED', 'COMMISSIONED', 'ERROR'].includes(e.event));
+    if (relevant.length === 0) return false;
+    return relevant[relevant.length - 1].event === 'ROM_PAUSED';
   }
 
   // Staged items count — updated by fetchCombinedQueue()
@@ -2571,6 +2634,7 @@
     const timerBlock   = document.getElementById('active-timer-block');
     const progressBar  = document.getElementById('active-progress-bar');
     const footerEl     = document.getElementById('active-slice-footer');
+    const pausedFooter = document.getElementById('paused-footer');
 
     // Derive round from register events for this slice
     function getRound(sliceId) {
@@ -2591,6 +2655,8 @@
       progressBar.style.display = 'none';
       timerBlock.style.display = 'none';
       footerEl.style.display = 'none';
+      pausedFooter.style.display = 'none';
+      frozenElapsed = null;
       document.getElementById('active-slice-aside').innerHTML = '';
       sliceStartTime = null;
 
@@ -2649,8 +2715,49 @@
         timerBlock.style.display = 'none';
       }
 
-      // Show footer with pause button
-      footerEl.style.display = '';
+      // Paused-state detection and footer swap
+      const slicePaused = mission && isSlicePaused(mission.id);
+      if (slicePaused) {
+        // Freeze timer at pause moment
+        if (frozenElapsed == null && sliceStartTime != null) {
+          // Find the ROM_PAUSED event timestamp
+          const pauseEvent = cachedRegisterEvents.filter(e =>
+            String(e.id) === String(mission.id) && e.event === 'ROM_PAUSED'
+          ).pop();
+          if (pauseEvent) {
+            const pauseTs = new Date(pauseEvent.ts).getTime();
+            frozenElapsed = Math.floor((pauseTs - sliceStartTime) / 1000);
+          } else {
+            frozenElapsed = Math.floor((Date.now() - sliceStartTime) / 1000);
+          }
+        }
+        if (frozenElapsed != null) {
+          const timerLabel = document.querySelector('.active-slice-timer-label');
+          elapsedEl.textContent = `Paused at ${fmtElapsed(frozenElapsed)}`;
+          if (timerLabel) timerLabel.textContent = 'paused';
+        }
+        footerEl.style.display = 'none';
+        pausedFooter.style.display = '';
+        // Reset abort confirm state
+        const abortConfirm = document.getElementById('abort-confirm');
+        const abortBtn = document.getElementById('abort-btn');
+        if (abortConfirm) abortConfirm.style.display = 'none';
+        if (abortBtn) abortBtn.style.display = '';
+
+        // Update status text
+        const statusEl = document.getElementById('rom-build-status');
+        if (statusEl) {
+          statusEl.textContent = 'Build paused';
+          statusEl.style.color = '#f59e0b';
+        }
+      } else {
+        // Not paused — show normal footer
+        frozenElapsed = null;
+        const timerLabel = document.querySelector('.active-slice-timer-label');
+        if (timerLabel) timerLabel.textContent = 'elapsed';
+        footerEl.style.display = '';
+        pausedFooter.style.display = 'none';
+      }
       currentMission = mission;
 
     } else {
@@ -2661,6 +2768,8 @@
       progressBar.style.display = 'none';
       timerBlock.style.display = 'none';
       footerEl.style.display  = 'none';
+      pausedFooter.style.display = 'none';
+      frozenElapsed = null;
       sliceStartTime = null;
       lastSliceId    = null;
       currentMission = null;
