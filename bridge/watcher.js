@@ -1427,8 +1427,8 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
       reason,
       phase: 'worktree_setup',
       command: `git worktree add … ${sliceBranch}`,
-      exit_code: err.code != null ? err.code : null,
-      stderr_tail: truncStderr(err.stderr || err.message),
+      exit_code: err.status != null ? err.status : null,
+      stderr_tail: truncStderr(err.stderr ? err.stderr.toString() : err.message),
     });
     appendKiraEvent({
       event: 'ERROR',
