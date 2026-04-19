@@ -505,6 +505,14 @@ function log(level, event, fields) {
 // queue files.
 // ---------------------------------------------------------------------------
 
+/**
+ * truncStderr(s) — Truncate stderr to last 2000 chars for register readability.
+ */
+function truncStderr(s) {
+  if (!s || typeof s !== 'string') return '';
+  return s.length > 2000 ? s.slice(-2000) : s;
+}
+
 function registerEvent(id, event, extra) {
   const entry = Object.assign(
     { ts: new Date().toISOString(), id: String(id), event },
@@ -1415,7 +1423,13 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
     const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
     writeErrorFile(errorPath2, id, reason, err, '', '', {});
     log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
-    registerEvent(id, 'ERROR', { reason, error: err.message });
+    registerEvent(id, 'ERROR', {
+      reason,
+      phase: 'worktree_setup',
+      command: `git worktree add … ${sliceBranch}`,
+      exit_code: err.code != null ? err.code : null,
+      stderr_tail: truncStderr(err.stderr || err.message),
+    });
     appendKiraEvent({
       event: 'ERROR',
       slice_id: id,
@@ -1582,7 +1596,15 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             });
             writeErrorFile(errorPath, id, 'incomplete_metrics', null, stdout, '', { missingFields: metricsValid.invalid, durationMs });
             log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'incomplete_metrics' });
-            registerEvent(id, 'ERROR', { reason: 'incomplete_metrics', invalid: metricsValid.invalid, durationMs });
+            registerEvent(id, 'ERROR', {
+              reason: 'incomplete_metrics',
+              phase: 'rom_invocation',
+              command: [config.claudeCommand, ...config.claudeArgs].join(' '),
+              exit_code: null,
+              stderr_tail: truncStderr(stderr),
+              invalid: metricsValid.invalid,
+              durationMs,
+            });
             appendKiraEvent({
               event: 'ERROR',
               slice_id: id,
@@ -1647,7 +1669,14 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
           });
           writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr, { durationMs });
           log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'no_report' });
-          registerEvent(id, 'ERROR', { reason: 'no_report', durationMs });
+          registerEvent(id, 'ERROR', {
+            reason: 'no_report',
+            phase: 'rom_invocation',
+            command: [config.claudeCommand, ...config.claudeArgs].join(' '),
+            exit_code: null,
+            stderr_tail: truncStderr(stderr),
+            durationMs,
+          });
           appendKiraEvent({
             event: 'ERROR',
             slice_id: id,
@@ -1803,7 +1832,14 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
 
         writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
-        registerEvent(id, 'ERROR', { reason, exitCode: err.code, durationMs });
+        registerEvent(id, 'ERROR', {
+          reason,
+          phase: 'rom_invocation',
+          command: [config.claudeCommand, ...config.claudeArgs].join(' '),
+          exit_code: err.code != null ? err.code : null,
+          stderr_tail: truncStderr(stderr),
+          durationMs,
+        });
         appendKiraEvent({
           event: 'ERROR',
           slice_id: id,
@@ -2785,6 +2821,13 @@ function invokeNog(id) {
         }
       } catch (_) {}
 
+      // Re-read the PARKED file after worktree copy so the amendment includes
+      // Nog's appended review (the closure's sliceContent is the pre-Nog version).
+      let updatedSliceContent = sliceContent;
+      try {
+        updatedSliceContent = fs.readFileSync(resolvedParkedPath, 'utf-8');
+      } catch (_) {}
+
       if (!verdict || !['PASS', 'RETURN'].includes(verdict)) {
         // Missing or unparseable verdict — treat as RETURN.
         log('warn', 'nog', { id, msg: 'Nog verdict unreadable — treating as RETURN', verdict, durationMs });
@@ -2800,7 +2843,7 @@ function invokeNog(id) {
         });
 
         // Create amendment for O'Brien with error details.
-        handleNogReturn(id, rootId, round, branchName, donePath, sliceContent, 'Nog verdict unreadable — manual review required', durationMs);
+        handleNogReturn(id, rootId, round, branchName, donePath, updatedSliceContent, 'Nog verdict unreadable — manual review required', durationMs);
 
         print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} Nog verdict UNREADABLE${SYM.sep}treated as RETURN (round ${round})`);
         print(`${B.bl}${B.sng.repeat(W - 1)}`);
@@ -2853,7 +2896,7 @@ function invokeNog(id) {
       log('info', 'nog', { id, verdict: 'RETURN', round, durationMs, summary });
       registerEvent(id, 'NOG_RETURN', { round });
 
-      handleNogReturn(id, rootId, round, branchName, donePath, sliceContent, summary || 'Nog review findings — see slice file', durationMs);
+      handleNogReturn(id, rootId, round, branchName, donePath, updatedSliceContent, summary || 'Nog review findings — see slice file', durationMs);
 
       // Clean up NOG.md verdict file.
       try { fs.renameSync(nogVerdictPath, path.join(TRASH_DIR, `${id}-NOG.md.return`)); } catch (_) {}
@@ -2898,6 +2941,13 @@ function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceCon
     log('warn', 'nog', { id, msg: 'Failed to rename EVALUATING to IN_REVIEW', error: err.message });
   }
 
+  // Derive branch from rootId when DONE report didn't include one.
+  // Without a branch, invokeRom won't treat the amendment as an amendment.
+  if (!branchName) {
+    branchName = `slice/${rootId}`;
+    log('warn', 'nog', { id, msg: `No branch in DONE report — deriving from rootId: ${branchName}` });
+  }
+
   // Write amendment slice QUEUED.
   const nextId = nextSliceId(QUEUE_DIR);
   const amendmentContent = [
@@ -2909,12 +2959,12 @@ function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceCon
     'to: rom',
     'priority: normal',
     `created: "${new Date().toISOString()}"`,
-    `amendment: "${branchName || ''}"`,
+    `amendment: "${branchName}"`,
     'timeout_min: null',
     'type: amendment',
     `root_commission_id: "${rootId}"`,
     `amendment_cycle: ${round}`,
-    `branch: "${branchName || ''}"`,
+    `branch: "${branchName}"`,
     `round: ${round}`,
     'status: QUEUED',
     '---',
@@ -3342,7 +3392,14 @@ function poll() {
 
     writeErrorFile(errPath, errId, 'invalid_slice', null, '', '', { missingFields });
     log('info', 'state', { id: errId, from: 'QUEUED', to: 'ERROR', reason: 'invalid_slice' });
-    registerEvent(errId, 'ERROR', { reason: 'invalid_slice', missingFields });
+    registerEvent(errId, 'ERROR', {
+      reason: 'invalid_slice',
+      phase: 'validation',
+      command: null,
+      exit_code: null,
+      stderr_tail: '',
+      missingFields,
+    });
     appendKiraEvent({
       event: 'ERROR',
       slice_id: errId,
