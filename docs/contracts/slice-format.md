@@ -49,7 +49,7 @@ The frontmatter block opens and closes with `---`. All keys are lowercase. Value
 
 | Field         | Type              | Description                                                                                       |
 |---------------|-------------------|---------------------------------------------------------------------------------------------------|
-| `amendment`   | string or null    | Prior branch name this slice reworks (e.g. `"slice/139"`). Absent / null for originals.           |
+| `apendment`   | string or null    | Prior branch name this slice reworks (e.g. `"slice/139"`). Absent / null for originals. Legacy: `amendment` accepted on read. |
 | `depends_on`  | string or null    | Comma-separated IDs. Informational only — the watcher does not enforce dependency ordering.       |
 | `timeout_min` | integer or null   | Per-slice inactivity timeout. `null` means the watcher default (20 min) applies.                  |
 
@@ -64,7 +64,7 @@ from: obrien
 to: rom
 priority: normal
 created: "2026-04-16T20:00:00Z"
-amendment: null
+apendment: null
 timeout_min: null
 status: STAGED
 ---
@@ -137,7 +137,7 @@ from: obrien
 to: rom
 priority: normal
 created: "2026-04-17T10:00:00Z"
-amendment: null
+apendment: null
 timeout_min: null
 status: STAGED
 ---

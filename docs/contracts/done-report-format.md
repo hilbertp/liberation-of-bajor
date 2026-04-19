@@ -46,7 +46,7 @@ ${id}-DONE.md
 | `from`                  | string  | `rom` or `leeta` — whichever implementor wrote the report.                    |
 | `to`                    | string  | Always `nog`.                                                                 |
 | `status`                | string  | One of `DONE`, `PARTIAL`, `BLOCKED`.                                          |
-| `slice_id`              | string  | Same as `id` for originals; may differ for amendment chains.                  |
+| `slice_id`              | string  | Same as `id` for originals; may differ for legacy apendment chains (pre-D3).                  |
 | `branch`                | string  | Git branch the implementor worked on (e.g. `"slice/143"`).                    |
 | `completed`             | string  | ISO 8601 UTC timestamp when the report was written.                           |
 
@@ -95,7 +95,7 @@ All acceptance criteria in the slice are met. The work is complete and verifiabl
 Some acceptance criteria met, some not. The report must explain:
 - which criteria are satisfied, with verification notes;
 - which criteria are not satisfied, and why;
-- what the implementor recommends (amendment slice, split, or O'Brien rework).
+- what the implementor recommends (apendment slice, split, or O'Brien rework).
 
 ### `BLOCKED`
 

@@ -78,7 +78,7 @@ Nog and Rom collaborate across up to **5 rounds** (rounds 1–5). Each round is 
 1. **Nog receives**: the slice file (with ACs) and the DONE report
 2. **Nog reads**: the actual git diff / changed files, not just the DONE report
 3. **Nog writes**: a review section appended to the slice file, structured as below
-4. **If findings exist**: slice is returned to Rom as an AMENDMENT. Rom fixes and resubmits.
+4. **If findings exist**: slice is returned to Rom as an APENDMENT. Rom fixes and resubmits.
 5. **If no findings**: Nog passes the slice to the next pipeline stage (Bashir or merge)
 
 ### Slice file annotation format
@@ -123,7 +123,7 @@ The full history of all rounds is preserved in the slice file. No round is ever 
 | Verdict | When to use | Watcher action |
 |---|---|---|
 | **PASS** | All ACs satisfied, no quality issues | Proceed to evaluator/merge |
-| **RETURN** | One or more ACs failed, or quality issues found | Create amendment for Rom |
+| **RETURN** | One or more ACs failed, or quality issues found | Requeue slice for Rom (apendment) |
 | **ESCALATE** | ACs cannot be satisfied as written | Emit `ESCALATED_TO_OBRIEN`, terminal state |
 
 ---

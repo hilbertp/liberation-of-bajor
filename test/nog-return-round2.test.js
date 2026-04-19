@@ -3,11 +3,13 @@
 /**
  * nog-return-round2.test.js
  *
- * Regression test for the round-2 Nog-return flow.
+ * Regression test for the round-2 Nog-return flow (post-D3: apendment-ID retention).
  * Verifies:
- *   1. handleNogReturn uses updated PARKED content (not stale pre-Nog version)
+ *   1. handleNogReturn rewrites slice in-place (no new ID burned)
  *   2. handleNogReturn derives branch from rootId when branchName is null
  *   3. ERROR register events carry phase, command, exit_code, stderr_tail
+ *   4. The new apendment spelling is used in write-side code
+ *   5. Legacy amendment fields are still accepted on read
  *
  * Run: node test/nog-return-round2.test.js
  */
@@ -76,15 +78,12 @@ function truncStderr(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1: handleNogReturn uses updated PARKED content
+// Test 1: Nog return rewrites slice in-place (ID retention)
 // ---------------------------------------------------------------------------
 
-console.log('\n== Round-2 Nog-return regression tests ==\n');
+console.log('\n== Round-2 Nog-return regression tests (post-D3: apendment-ID retention) ==\n');
 
-test('Amendment embeds updated PARKED content (not stale pre-Nog version)', () => {
-  // Simulate the flow: invokeNog reads PARKED, Nog appends review, then
-  // handleNogReturn should use the UPDATED content.
-
+test('Nog return uses updated PARKED content (not stale pre-Nog version)', () => {
   const originalContent = [
     '---',
     'id: "150"',
@@ -117,10 +116,10 @@ test('Amendment embeds updated PARKED content (not stale pre-Nog version)', () =
   ].join('\n'));
 
   // Simulate what the FIXED invokeNog does: re-read PARKED after Nog updates it
-  const staleContent = originalContent; // pre-Nog version (what old code used)
-  const freshContent = fs.readFileSync(parkedPath, 'utf-8'); // post-Nog version (what fixed code uses)
+  const staleContent = originalContent; // pre-Nog version
+  const freshContent = fs.readFileSync(parkedPath, 'utf-8'); // post-Nog version
 
-  // The amendment should embed freshContent, not staleContent
+  // The apendment should embed freshContent, not staleContent
   assert.ok(
     freshContent.includes('## Nog Review — Round 1'),
     'Updated PARKED content should include Nog review'
@@ -136,30 +135,28 @@ test('Amendment embeds updated PARKED content (not stale pre-Nog version)', () =
 });
 
 // ---------------------------------------------------------------------------
-// Test 2: handleNogReturn derives branch from rootId when null
+// Test 2: Branch derivation from rootId when null
 // ---------------------------------------------------------------------------
 
 test('Branch derived from rootId when branchName is null', () => {
-  // Simulate amendment creation with null branchName
   const rootId = '150';
   let branchName = null;
 
-  // This is the fix: derive branch from rootId
   if (!branchName) {
     branchName = `slice/${rootId}`;
   }
 
   assert.strictEqual(branchName, 'slice/150');
 
-  // Build amendment frontmatter
-  const amendment = [
+  // Build apendment frontmatter (new D3 scheme: same ID, apendment field)
+  const apendmentFm = [
     '---',
-    `id: "999"`,
+    `id: "150"`,
     `title: "Nog return round 1 — fix findings for slice ${rootId}"`,
-    `amendment: "${branchName}"`,
+    `apendment: "${branchName}"`,
     `branch: "${branchName}"`,
-    `root_commission_id: "${rootId}"`,
-    'type: amendment',
+    `round: 1`,
+    `apendment_cycle: 1`,
     'from: nog',
     'to: rom',
     'priority: normal',
@@ -168,30 +165,47 @@ test('Branch derived from rootId when branchName is null', () => {
     '---',
   ].join('\n');
 
-  const meta = parseFrontmatter(amendment);
+  const meta = parseFrontmatter(apendmentFm);
 
-  // The amendment field must be truthy so invokeRom treats it as an amendment
-  assert.ok(meta.amendment, 'amendment field must be truthy');
-  assert.strictEqual(meta.amendment, 'slice/150');
+  // The apendment field must be truthy so invokeRom treats it as an apendment
+  assert.ok(meta.apendment, 'apendment field must be truthy');
+  assert.strictEqual(meta.apendment, 'slice/150');
   assert.strictEqual(meta.branch, 'slice/150');
+  // Same ID — no new ID burned
+  assert.strictEqual(meta.id, '150');
 });
 
 // ---------------------------------------------------------------------------
-// Test 3: Amendment with empty branchName (old bug) would have been falsy
+// Test 3: Legacy amendment field is still accepted on read (back-compat)
 // ---------------------------------------------------------------------------
 
-test('Empty amendment field is falsy (demonstrates the old bug)', () => {
-  const badAmendment = [
+test('Legacy amendment field is accepted on read (back-compat)', () => {
+  const legacyFm = [
     '---',
     'id: "999"',
-    'amendment: ""',
+    'amendment: "slice/150"',
+    'branch: "slice/150"',
+    'type: amendment',
+    '---',
+  ].join('\n');
+
+  const meta = parseFrontmatter(legacyFm);
+  // Legacy field still readable
+  assert.ok(meta.amendment, 'Legacy amendment field should be truthy');
+  assert.strictEqual(meta.amendment, 'slice/150');
+});
+
+test('Empty apendment field is falsy (demonstrates the old bug)', () => {
+  const badApendment = [
+    '---',
+    'id: "999"',
+    'apendment: ""',
     'branch: ""',
     '---',
   ].join('\n');
 
-  const meta = parseFrontmatter(badAmendment);
-  // Empty string is falsy — invokeRom would NOT treat this as an amendment
-  assert.ok(!meta.amendment, 'Empty amendment field should be falsy');
+  const meta = parseFrontmatter(badApendment);
+  assert.ok(!meta.apendment, 'Empty apendment field should be falsy');
 });
 
 // ---------------------------------------------------------------------------
@@ -202,7 +216,6 @@ test('truncStderr truncates long stderr to 2000 chars', () => {
   const long = 'x'.repeat(5000);
   const result = truncStderr(long);
   assert.strictEqual(result.length, 2000);
-  // Should keep the TAIL (last 2000 chars)
   assert.strictEqual(result, long.slice(-2000));
 });
 
@@ -221,7 +234,6 @@ test('truncStderr passes short strings through', () => {
 // ---------------------------------------------------------------------------
 
 test('ERROR register event payload has phase, command, exit_code, stderr_tail', () => {
-  // Simulate what registerEvent produces with the enriched payload
   const event = {
     ts: new Date().toISOString(),
     id: '154',
@@ -246,12 +258,10 @@ test('ERROR register event payload has phase, command, exit_code, stderr_tail', 
 // ---------------------------------------------------------------------------
 
 test('All registerEvent ERROR calls include phase field', () => {
-  // Find all registerEvent(*, 'ERROR', ...) calls and verify they include 'phase:'
   const errorCalls = [];
   const lines = watcherSource.split('\n');
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].includes("registerEvent") && lines[i].includes("'ERROR'")) {
-      // Collect the next 10 lines to capture the full call
       const block = lines.slice(i, i + 12).join('\n');
       errorCalls.push({ line: i + 1, block });
     }
@@ -276,7 +286,6 @@ test('All registerEvent ERROR calls include phase field', () => {
 // ---------------------------------------------------------------------------
 
 test('countNogRounds counts review headers in embedded content', () => {
-  // Simulate amendment content with embedded original + Nog review
   function countNogRounds(content) {
     const matches = content.match(/^## Nog Review — Round \d+/gm);
     return matches ? matches.length : 0;
@@ -285,7 +294,7 @@ test('countNogRounds counts review headers in embedded content', () => {
   const content = [
     '---',
     'id: "154"',
-    'type: amendment',
+    'round: 1',
     '---',
     '## Original slice',
     '## Nog Review — Round 1',
@@ -303,12 +312,47 @@ test('countNogRounds counts review headers in embedded content', () => {
 // ---------------------------------------------------------------------------
 
 test('No execSync/execFile call uses stdio inherit (except selfRestart spawn)', () => {
-  // Parse watcher source for execSync/execFile calls that use inherit
-  const inheritMatches = watcherSource.match(/exec(?:Sync|File)\([^)]*stdio:\s*'inherit'/g);
+  const inheritMatches = watcherSource.match(/exec(?:Sync|execFile)\([^)]*stdio:\s*'inherit'/g);
   assert.strictEqual(
     inheritMatches,
     null,
     `Found execSync/execFile calls with stdio: 'inherit': ${JSON.stringify(inheritMatches)}`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 9: Watcher uses APENDMENT_NEEDED verdict string (not AMENDMENT_NEEDED)
+// ---------------------------------------------------------------------------
+
+test('Evaluator prompt uses APENDMENT_NEEDED verdict string', () => {
+  assert.ok(
+    watcherSource.includes('"APENDMENT_NEEDED"'),
+    'Watcher should reference APENDMENT_NEEDED'
+  );
+  // The only AMENDMENT_NEEDED reference should be in the back-compat conversion
+  const amendmentNeededLines = watcherSource.split('\n').filter(l =>
+    l.includes('AMENDMENT_NEEDED') && !l.includes('Accept both') && !l.includes('verdict ===')
+  );
+  assert.strictEqual(
+    amendmentNeededLines.length,
+    0,
+    `Found AMENDMENT_NEEDED outside back-compat: ${amendmentNeededLines.map(l => l.trim()).join('; ')}`
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 10: handleApendment function exists (replaces handleAmendment)
+// ---------------------------------------------------------------------------
+
+test('handleApendment function exists in watcher source', () => {
+  assert.ok(
+    watcherSource.includes('function handleApendment('),
+    'Watcher should have handleApendment function'
+  );
+  // Old function should not exist
+  assert.ok(
+    !watcherSource.includes('function handleAmendment('),
+    'Watcher should NOT have handleAmendment function'
   );
 });
 

@@ -99,7 +99,7 @@ test('MAX_ROUNDS_EXHAUSTED event includes round and reason fields', () => {
   assert.ok(block.includes('reason'), 'MAX_ROUNDS_EXHAUSTED must include reason field');
 });
 
-test('Round >5 does NOT commission a new slice (no amendment written)', () => {
+test('Round >5 does NOT commission a new slice (no apendment written)', () => {
   // In the round >5 block, there should be no nextSliceId call or QUEUED write
   const lines = watcherSource.split('\n');
   let inRoundBlock = false;

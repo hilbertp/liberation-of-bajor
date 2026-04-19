@@ -413,7 +413,7 @@ function printStartupBlock(recoveryActions) {
   // Log staged slices count
   let stagedCount = 0;
   try {
-    const stagedFiles = fs.readdirSync(STAGED_DIR).filter(f => f.endsWith('-STAGED.md') || f.endsWith('-NEEDS_AMENDMENT.md'));
+    const stagedFiles = fs.readdirSync(STAGED_DIR).filter(f => f.endsWith('-STAGED.md') || f.endsWith('-NEEDS_APENDMENT.md') || f.endsWith('-NEEDS_AMENDMENT.md'));
     stagedCount = stagedFiles.length;
   } catch (_) {}
   if (stagedCount > 0) {
@@ -602,6 +602,134 @@ function updateFrontmatter(text, updates) {
   return [...lines.slice(0, start + 1), ...fmLines, ...lines.slice(end)].join('\n');
 }
 
+/**
+ * appendRoundEntry(sliceFilePath, roundEntry)
+ *
+ * Appends a round entry to the slice file's frontmatter `rounds:` YAML array
+ * and recomputes slice-level `total_*` fields. The entry is a plain object:
+ * { round, commissioned_at, done_at, durationMs, tokensIn, tokensOut, costUsd, nog_verdict, nog_reason }
+ *
+ * Frontmatter `rounds:` is stored as a YAML block sequence inside the --- fences.
+ * After appending, total_durationMs/total_tokensIn/total_tokensOut/total_costUsd are recomputed.
+ */
+function appendRoundEntry(sliceFilePath, roundEntry) {
+  let content;
+  try {
+    content = fs.readFileSync(sliceFilePath, 'utf-8');
+  } catch (err) {
+    log('warn', 'rounds', { msg: 'Cannot read slice file for rounds append', path: sliceFilePath, error: err.message });
+    return;
+  }
+
+  const lines = content.split('\n');
+  let fmStart = -1, fmEnd = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      if (fmStart === -1) { fmStart = i; } else { fmEnd = i; break; }
+    }
+  }
+  if (fmStart === -1 || fmEnd === -1) {
+    log('warn', 'rounds', { msg: 'No frontmatter found in slice file', path: sliceFilePath });
+    return;
+  }
+
+  // Build the YAML lines for this round entry.
+  const yamlEntry = [
+    `  - round: ${roundEntry.round}`,
+    `    commissioned_at: "${roundEntry.commissioned_at || ''}"`,
+    `    done_at: "${roundEntry.done_at || ''}"`,
+    `    durationMs: ${roundEntry.durationMs || 0}`,
+    `    tokensIn: ${roundEntry.tokensIn || 0}`,
+    `    tokensOut: ${roundEntry.tokensOut || 0}`,
+    `    costUsd: ${roundEntry.costUsd != null ? roundEntry.costUsd : 0}`,
+    `    nog_verdict: "${roundEntry.nog_verdict || ''}"`,
+    `    nog_reason: "${(roundEntry.nog_reason || '').replace(/"/g, '\\"')}"`,
+  ];
+
+  // Find existing rounds: block or insert after last frontmatter field.
+  const fmLines = lines.slice(fmStart + 1, fmEnd);
+  const roundsIdx = fmLines.findIndex(l => /^rounds:\s*$/.test(l.trim()) || /^rounds:$/.test(l.trim()));
+
+  if (roundsIdx === -1) {
+    // No rounds: field yet — add it.
+    fmLines.push('rounds:');
+    fmLines.push(...yamlEntry);
+  } else {
+    // Find the end of the existing rounds block (indented lines after rounds:).
+    let insertAt = roundsIdx + 1;
+    while (insertAt < fmLines.length && /^\s{2,}-?\s/.test(fmLines[insertAt])) {
+      insertAt++;
+    }
+    fmLines.splice(insertAt, 0, ...yamlEntry);
+  }
+
+  // Parse all rounds to recompute totals.
+  let totalDuration = 0, totalIn = 0, totalOut = 0, totalCost = 0;
+  for (let i = 0; i < fmLines.length; i++) {
+    const m = fmLines[i].match(/^\s+durationMs:\s*(\d+)/);
+    if (m) totalDuration += parseInt(m[1], 10);
+    const m2 = fmLines[i].match(/^\s+tokensIn:\s*(\d+)/);
+    if (m2) totalIn += parseInt(m2[1], 10);
+    const m3 = fmLines[i].match(/^\s+tokensOut:\s*(\d+)/);
+    if (m3) totalOut += parseInt(m3[1], 10);
+    const m4 = fmLines[i].match(/^\s+costUsd:\s*([\d.]+)/);
+    if (m4) totalCost += parseFloat(m4[1]);
+  }
+
+  // Update or insert total_* fields.
+  const totals = {
+    total_durationMs: String(totalDuration),
+    total_tokensIn: String(totalIn),
+    total_tokensOut: String(totalOut),
+    total_costUsd: String(parseFloat(totalCost.toFixed(6))),
+  };
+
+  for (const [key, val] of Object.entries(totals)) {
+    const idx = fmLines.findIndex(l => {
+      const c = l.indexOf(':');
+      return c !== -1 && l.slice(0, c).trim() === key;
+    });
+    const newLine = `${key}: ${val}`;
+    if (idx !== -1) fmLines[idx] = newLine;
+    else fmLines.push(newLine);
+  }
+
+  // Also update round field at slice level.
+  const roundFieldIdx = fmLines.findIndex(l => {
+    const c = l.indexOf(':');
+    return c !== -1 && l.slice(0, c).trim() === 'round' && !/^\s/.test(l);
+  });
+  const roundLine = `round: ${roundEntry.round}`;
+  if (roundFieldIdx !== -1) fmLines[roundFieldIdx] = roundLine;
+  else fmLines.push(roundLine);
+
+  const result = [...lines.slice(0, fmStart + 1), ...fmLines, ...lines.slice(fmEnd)].join('\n');
+  try {
+    fs.writeFileSync(sliceFilePath, result);
+  } catch (err) {
+    log('warn', 'rounds', { msg: 'Failed to write updated slice file', path: sliceFilePath, error: err.message });
+  }
+}
+
+/**
+ * extractRomTelemetry(doneReportContent)
+ *
+ * Pulls durationMs, tokensIn, tokensOut, costUsd from a Rom DONE report's frontmatter.
+ */
+function extractRomTelemetry(doneReportContent) {
+  const meta = parseFrontmatter(doneReportContent) || {};
+  const tokensIn = parseInt(meta.tokens_in, 10) || 0;
+  const tokensOut = parseInt(meta.tokens_out, 10) || 0;
+  return {
+    durationMs: parseInt(meta.elapsed_ms, 10) || 0,
+    tokensIn,
+    tokensOut,
+    costUsd: computeCost(tokensIn, tokensOut) || 0,
+    commissioned_at: meta.created || meta.commissioned_at || '',
+    done_at: meta.completed || '',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Git safety layer — FUSE-safe branch management
 // ---------------------------------------------------------------------------
@@ -778,7 +906,7 @@ function fuseSafeCheckoutMain(id) {
  *
  * FUSE-safe checkout to an EXISTING feature branch.
  * Same strategy as fuseSafeCheckoutMain but targets a named branch.
- * Used for amendment flows where the watcher needs to resume work on
+ * Used for apendment flows where the watcher needs to resume work on
  * a branch after a restart (when HEAD may have returned to main).
  *
  * Steps:
@@ -1128,7 +1256,7 @@ function getWorktreePath(id) {
  *
  * Creates a git worktree at /tmp/ds9-worktrees/{id}/ for the given branch.
  * For new slices: creates a new branch from main.
- * For amendments: checks out the existing branch.
+ * For apendments: checks out the existing branch.
  * If a worktree already exists for this ID (requeue reuse), returns it.
  * If the branch is already checked out in another worktree, prunes the old one.
  *
@@ -1174,7 +1302,7 @@ function createWorktree(id, branchName) {
       }
     } catch (_) {}
 
-    // Existing branch (amendment or retry)
+    // Existing branch (apendment or retry)
     execSync(`git worktree add "${wtPath}" ${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
   } else {
     // New branch from main
@@ -1399,12 +1527,12 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
   // failures from corrupting git state.
   //
   // New slices:  main → create slice/{id} branch → invoke Rom on that branch
-  // Amendments:  checkout existing branch → invoke Rom on that branch
+  // Apendments:  checkout existing branch → invoke Rom on that branch
   // ──────────────────────────────────────────────────────────────────────────
   const sliceMeta = parseFrontmatter(sliceContent) || {};
-  const isAmendment = !!(sliceMeta.amendment || (sliceMeta.references && sliceMeta.references !== 'null'));
-  const sliceBranch = isAmendment
-    ? (sliceMeta.amendment || sliceMeta.branch || `slice/${sliceMeta.root_commission_id || id}`)
+  const isApendment = !!(sliceMeta.apendment || sliceMeta.amendment || (sliceMeta.references && sliceMeta.references !== 'null') || (parseInt(sliceMeta.round, 10) > 1));
+  const sliceBranch = isApendment
+    ? (sliceMeta.apendment || sliceMeta.amendment || sliceMeta.branch || `slice/${sliceMeta.root_commission_id || id}`)
     : `slice/${id}`;
 
   // ── WORKTREE-BASED BRANCH LIFECYCLE ──────────────────────────────────────
@@ -1412,15 +1540,15 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
   // PROJECT_DIR stays on main permanently. The dashboard is never affected.
   //
   // New slices:  create worktree with new branch from main
-  // Amendments:  create worktree on existing branch (prunes old worktree if needed)
+  // Apendments:  create worktree on existing branch (prunes old worktree if needed)
   // ──────────────────────────────────────────────────────────────────────────
   let worktreePath;
   try {
     ensureMainIsFresh(id);
     worktreePath = createWorktree(id, sliceBranch);
-    log('info', 'branch', { id, msg: `Worktree ready at ${worktreePath} on branch ${sliceBranch}`, isAmendment });
+    log('info', 'branch', { id, msg: `Worktree ready at ${worktreePath} on branch ${sliceBranch}`, isApendment });
   } catch (err) {
-    const reason = isAmendment ? 'amendment_branch_checkout_failed' : 'branch_creation_failed';
+    const reason = isApendment ? 'apendment_branch_checkout_failed' : 'branch_creation_failed';
     log('error', 'branch', { id, msg: `Failed to create worktree for ${sliceBranch} — aborting invocation`, error: err.message });
     const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
     writeErrorFile(errorPath2, id, reason, err, '', '', {});
@@ -2028,7 +2156,7 @@ function extractJSON(text) {
  *
  * Reads the SLICE and EVALUATING files for the given slice ID,
  * constructs an evaluator prompt, calls claude -p, parses the JSON verdict,
- * and handles ACCEPTED / AMENDMENT_NEEDED / STUCK outcomes.
+ * and handles ACCEPTED / APENDMENT_NEEDED / STUCK outcomes.
  */
 function invokeEvaluator(id) {
   const parkedPath  = path.join(QUEUE_DIR, `${id}-PARKED.md`);
@@ -2072,7 +2200,7 @@ function invokeEvaluator(id) {
   const doneMeta = parseFrontmatter(evaluatingContent) || {};
   const branchName = doneMeta.branch || null;
 
-  // Determine root slice ID and amendment cycle.
+  // Determine root slice ID and apendment cycle.
   const sliceMeta = parseFrontmatter(sliceContent) || {};
   const rootId = sliceMeta.root_commission_id || id;
   const cycle  = countReviewedCycles(rootId);
@@ -2093,7 +2221,7 @@ function invokeEvaluator(id) {
     '',
     '### Part 1: Acceptance Criteria',
     'Did Rom\'s work satisfy ALL acceptance criteria in the original slice?',
-    'Be specific. If even one AC is not met, the verdict is AMENDMENT_NEEDED.',
+    'Be specific. If even one AC is not met, the verdict is APENDMENT_NEEDED.',
     '',
     '### Part 2: Intent Verification',
     'Every slice has a goal — a reason it exists. Read the slice\'s title and goal field.',
@@ -2105,7 +2233,7 @@ function invokeEvaluator(id) {
     'controls" but wire them to a hardcoded page 1 — the ACs pass, the intent fails.',
     '',
     'If the solution does not meaningfully achieve the slice\'s stated goal,',
-    'even if individual ACs are technically met, that is AMENDMENT_NEEDED.',
+    'even if individual ACs are technically met, that is APENDMENT_NEEDED.',
     'Explain what the gap is between the intent and what was delivered.',
     '',
     '### Part 3: Scope Discipline',
@@ -2118,7 +2246,7 @@ function invokeEvaluator(id) {
     '- Did any existing file lose significant content that was NOT related to the task?',
     '',
     'Out-of-scope changes are a red flag. If you see them and the DONE report does',
-    'not explain why, that is an AMENDMENT_NEEDED — the fix instruction should be',
+    'not explain why, that is an APENDMENT_NEEDED — the fix instruction should be',
     '"revert changes to [file] that are outside the scope of this slice."',
     '',
     '## ORIGINAL SLICE (contains the acceptance criteria):',
@@ -2131,19 +2259,19 @@ function invokeEvaluator(id) {
     '',
     scopeDiff,
     '',
-    `## AMENDMENT CYCLE: ${cycle} of 5`,
+    `## APENDMENT CYCLE: ${cycle} of 5`,
     '',
     `## BRANCH: ${branchName || '(unknown — read from DONE report above)'}`,
     '',
     'Respond with ONLY valid JSON, no other text:',
     '{',
-    '  "verdict": "ACCEPTED" or "AMENDMENT_NEEDED",',
+    '  "verdict": "ACCEPTED" or "APENDMENT_NEEDED",',
     '  "reason": "One paragraph explaining your decision. Cover all three parts: ACs, intent, and scope.",',
     '  "failed_criteria": ["list of specific ACs not met, empty if all pass"],',
     '  "intent_met": true or false,',
     '  "intent_gap": "If intent_met is false: what the slice intended vs what was actually delivered. If true: empty string.",',
     '  "out_of_scope": ["list of files changed outside the slice\'s scope, empty if clean"],',
-    '  "amendment_instructions": "If AMENDMENT_NEEDED: specific instructions for Rom. Cover failed ACs, intent gaps, and out-of-scope reversions. Reference file paths. If ACCEPTED: empty string."',
+    '  "apendment_instructions": "If APENDMENT_NEEDED: specific instructions for Rom. Cover failed ACs, intent gaps, and out-of-scope reversions. Reference file paths. If ACCEPTED: empty string."',
     '}',
   ].join('\n');
 
@@ -2200,7 +2328,7 @@ function invokeEvaluator(id) {
       let verdict = null;
       let reason = '';
       let failedCriteria = [];
-      let amendmentInstructions = '';
+      let apendmentInstructions = '';
 
       if (!err) {
         // Parse the evaluator's JSON response.
@@ -2220,7 +2348,7 @@ function invokeEvaluator(id) {
             verdict = parsed.verdict;
             reason = parsed.reason || '';
             failedCriteria = parsed.failed_criteria || [];
-            amendmentInstructions = parsed.amendment_instructions || '';
+            apendmentInstructions = parsed.amendment_instructions || parsed.apendment_instructions || '';
           }
         } catch (parseErr) {
           log('warn', 'evaluator', { id, msg: 'Failed to parse evaluator JSON response', error: parseErr.message, stdout: stdout.slice(0, 500) });
@@ -2229,7 +2357,9 @@ function invokeEvaluator(id) {
         log('error', 'evaluator', { id, msg: 'claude -p evaluator failed', error: err.message, durationMs });
       }
 
-      if (!verdict || !['ACCEPTED', 'AMENDMENT_NEEDED'].includes(verdict)) {
+      // Accept both AMENDMENT_NEEDED (legacy) and APENDMENT_NEEDED (new).
+      if (verdict === 'AMENDMENT_NEEDED') verdict = 'APENDMENT_NEEDED';
+      if (!verdict || !['ACCEPTED', 'APENDMENT_NEEDED'].includes(verdict)) {
         // Fallback: rename EVALUATING back to DONE for re-evaluation.
         log('warn', 'evaluator', { id, msg: 'No valid verdict — requeueing for re-evaluation', verdict });
         try { fs.renameSync(evaluatingPath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
@@ -2246,14 +2376,14 @@ function invokeEvaluator(id) {
         return;
       }
 
-      // Determine if STUCK: cycle >= 5 and amendment needed.
-      const isStuck = verdict === 'AMENDMENT_NEEDED' && cycle >= 5;
+      // Determine if STUCK: cycle >= 5 and apendment needed.
+      const isStuck = verdict === 'APENDMENT_NEEDED' && cycle >= 5;
       const finalVerdict = isStuck ? 'STUCK' : verdict;
 
       if (finalVerdict === 'ACCEPTED') {
         handleAccepted(id, reason, cycle + 1, branchName, evaluatingPath, durationMs);
-      } else if (finalVerdict === 'AMENDMENT_NEEDED') {
-        handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs);
+      } else if (finalVerdict === 'APENDMENT_NEEDED') {
+        handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs);
       } else {
         handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs);
       }
@@ -2436,84 +2566,78 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
 }
 
 /**
- * handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructions,
+ * handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions,
  *                 cycle, branchName, evaluatingPath, sliceContent, durationMs)
  *
- * AMENDMENT_NEEDED verdict: register event, rename EVALUATING → IN_REVIEW, write amendment QUEUED.
+ * APENDMENT_NEEDED verdict: register event, rewrite slice file in-place as QUEUED.
+ * The slice keeps its original ID — no new slice is created.
  */
-function handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs) {
-  registerEvent(id, 'REVIEWED', { verdict: 'AMENDMENT_NEEDED', reason, failed_criteria: failedCriteria, cycle: cycle + 1, root_commission_id: rootId });
-  log('info', 'evaluator', { id, verdict: 'AMENDMENT_NEEDED', cycle: cycle + 1, rootId, durationMs });
+function handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs) {
+  registerEvent(id, 'REVIEWED', { verdict: 'APENDMENT_NEEDED', reason, failed_criteria: failedCriteria, cycle: cycle + 1, round: cycle + 1, apendment_cycle: cycle + 1 });
+  log('info', 'evaluator', { id, verdict: 'APENDMENT_NEEDED', cycle: cycle + 1, rootId, durationMs });
 
-  const inReviewPath = path.join(QUEUE_DIR, `${id}-IN_REVIEW.md`);
+  // Read the PARKED file for in-place rewrite.
+  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const legacyParkedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  const resolvedParked = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
+  let parkedContent;
   try {
-    fs.renameSync(evaluatingPath, inReviewPath);
-    log('info', 'state', { id, from: 'EVALUATING', to: 'IN_REVIEW' });
-  } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'Failed to rename EVALUATING to IN_REVIEW', error: err.message });
+    parkedContent = fs.readFileSync(resolvedParked, 'utf-8');
+  } catch (_) {
+    parkedContent = sliceContent;
   }
 
-  // Write amendment slice QUEUED.
-  const nextId = nextSliceId(QUEUE_DIR);
+  // Update frontmatter: set status=QUEUED, round, apendment_cycle, apendment, branch.
+  const effectiveBranch = branchName || `slice/${rootId}`;
+  let updatedContent = updateFrontmatter(parkedContent, {
+    status: 'QUEUED',
+    round: String(cycle + 1),
+    apendment_cycle: String(cycle + 1),
+    apendment: effectiveBranch,
+    branch: effectiveBranch,
+  });
+
+  // Append the apendment round section.
   const failedList = (failedCriteria || []).map((c, i) => `${i + 1}. ${c}`).join('\n');
-  const amendmentContent = [
-    '---',
-    `id: "${nextId}"`,
-    `title: "Amendment ${cycle + 1} — fix failed criteria for slice ${rootId}"`,
-    `goal: "All acceptance criteria from slice ${rootId} are met on branch ${branchName || '(original branch)'}."`,
-    'from: nog',
-    'to: rom',
-    'priority: normal',
-    `created: "${new Date().toISOString()}"`,
-    `amendment: "${branchName || ''}"`,
-    'timeout_min: null',
-    'type: amendment',
-    `root_commission_id: "${rootId}"`,
-    `amendment_cycle: ${cycle + 1}`,
-    `branch: "${branchName || ''}"`,
-    '---',
+  updatedContent += [
     '',
-    '## Objective',
+    `## Apendment round ${cycle + 1}`,
     '',
-    `This is an amendment to slice ${rootId} (cycle ${cycle + 1} of 5).`,
+    `This is an apendment to slice ${rootId} (cycle ${cycle + 1} of 5).`,
     '',
     '**IMPORTANT: The watcher handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
     '',
-    '## Failed criteria',
+    '### Failed criteria',
     '',
-    failedList || '(see amendment instructions below)',
+    failedList || '(see apendment instructions below)',
     '',
-    '## Amendment instructions',
+    '### Apendment instructions',
     '',
-    amendmentInstructions || '(see failed criteria above)',
+    apendmentInstructions || '(see failed criteria above)',
     '',
-    '## Original acceptance criteria (from slice ' + rootId + ')',
-    '',
-    sliceContent,
-    '',
-    '## Constraints',
-    '',
-    '- Do NOT create, checkout, or switch branches. The watcher manages the branch lifecycle.',
-    '- Commit your changes to the current branch only.',
-    '',
-    '## Success criteria',
+    '### Success criteria',
     '',
     '1. All failed criteria listed above are resolved.',
-    '2. All original acceptance criteria from slice ' + rootId + ' are met.',
+    `2. All original acceptance criteria from slice ${rootId} are met.`,
     '3. DONE report includes branch name in frontmatter.',
+    '',
   ].join('\n');
 
-  const amendmentQueuedPath = path.join(QUEUE_DIR, `${nextId}-QUEUED.md`);
+  // Write updated content back to QUEUED file (same ID).
+  const queuedPath = path.join(QUEUE_DIR, `${id}-QUEUED.md`);
   try {
-    fs.writeFileSync(amendmentQueuedPath, amendmentContent);
-    log('info', 'evaluator', { id, msg: `Wrote amendment slice ${nextId}-QUEUED.md`, nextId, cycle: cycle + 1, rootId });
+    fs.writeFileSync(queuedPath, updatedContent);
+    log('info', 'evaluator', { id, msg: `Rewrote slice ${id} as ${id}-QUEUED.md (apendment cycle ${cycle + 1})`, cycle: cycle + 1, rootId });
   } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'Failed to write amendment slice QUEUED', error: err.message });
+    log('warn', 'evaluator', { id, msg: 'Failed to write apendment QUEUED', error: err.message });
   }
 
-  callReviewAPI(id, 'AMENDMENT_NEEDED', reason);
+  // Remove the EVALUATING file.
+  try { fs.unlinkSync(evaluatingPath); } catch (_) {}
 
-  print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} AMENDMENT_NEEDED (cycle ${cycle + 1})${SYM.sep}Amendment ${nextId} queued`);
+  callReviewAPI(id, 'APENDMENT_NEEDED', reason);
+
+  print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} APENDMENT_NEEDED (cycle ${cycle + 1})${SYM.sep}Slice ${id} re-queued`);
   print(`${B.bl}${B.sng.repeat(W - 1)}`);
   print('');
 }
@@ -2524,7 +2648,7 @@ function handleAmendment(id, rootId, reason, failedCriteria, amendmentInstructio
  * STUCK verdict: register event, rename EVALUATING → STUCK, no new QUEUED.
  */
 function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) {
-  registerEvent(id, 'STUCK', { reason: 'amendment cap reached', cycle, branch: branchName });
+  registerEvent(id, 'STUCK', { reason: 'apendment cap reached', cycle, branch: branchName });
   log('warn', 'evaluator', { id, verdict: 'STUCK', cycle, durationMs });
 
   // timesheet write point 2 — update watcher row at terminal state
@@ -2552,7 +2676,7 @@ function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) 
   // Clean up the worktree — STUCK is a terminal state (5th rejection / back to O'Brien)
   try { cleanupWorktree(id, branchName); } catch (_) {}
 
-  print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} STUCK${SYM.sep}Slice ${id} hit amendment cap (${cycle} cycles). Manual intervention required.`);
+  print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} STUCK${SYM.sep}Slice ${id} hit apendment cap (${cycle} cycles). Manual intervention required.`);
   print(`${B.bl}${B.sng.repeat(W - 1)}`);
   print('');
 }
@@ -2580,7 +2704,7 @@ function countNogRounds(sliceContent) {
  * invokes Nog headless via `claude -p`, and handles the verdict.
  *
  * PASS → proceed to existing evaluator flow (ACCEPTED path).
- * RETURN → create amendment and re-queue for O'Brien.
+ * RETURN → rewrite slice in-place and re-queue for O'Brien.
  * Round 6 → escalate to Kira.
  */
 function invokeNog(id) {
@@ -2674,6 +2798,20 @@ function invokeNog(id) {
       cycle: round,
       branch: branchName || null,
       details: `Slice ${id} failed Nog review after 5 rounds — escalating to Kira`,
+    });
+
+    // Append round entry for the exhausted round to PARKED file.
+    const romTelemetryExhausted = extractRomTelemetry(doneReportContents);
+    appendRoundEntry(resolvedParkedPath, {
+      round: 5,
+      commissioned_at: romTelemetryExhausted.commissioned_at,
+      done_at: romTelemetryExhausted.done_at,
+      durationMs: romTelemetryExhausted.durationMs,
+      tokensIn: romTelemetryExhausted.tokensIn,
+      tokensOut: romTelemetryExhausted.tokensOut,
+      costUsd: romTelemetryExhausted.costUsd,
+      nog_verdict: 'MAX_ROUNDS_EXHAUSTED',
+      nog_reason: 'Rom exhausted 5 rounds without Nog sign-off',
     });
 
     registerEvent(id, 'NOG_ESCALATION', { round, branch: branchName });
@@ -2832,7 +2970,7 @@ function invokeNog(id) {
         }
       } catch (_) {}
 
-      // Re-read the PARKED file after worktree copy so the amendment includes
+      // Re-read the PARKED file after worktree copy so the apendment includes
       // Nog's appended review (the closure's sliceContent is the pre-Nog version).
       let updatedSliceContent = sliceContent;
       try {
@@ -2843,7 +2981,21 @@ function invokeNog(id) {
         // Missing or unparseable verdict — treat as RETURN.
         log('warn', 'nog', { id, msg: 'Nog verdict unreadable — treating as RETURN', verdict, durationMs });
 
-        registerEvent(id, 'NOG_RETURN', { round, reason: 'verdict_unreadable' });
+        // Append round entry to PARKED file.
+        const romTelemetryUnread = extractRomTelemetry(doneReportContents);
+        appendRoundEntry(resolvedParkedPath, {
+          round,
+          commissioned_at: romTelemetryUnread.commissioned_at,
+          done_at: romTelemetryUnread.done_at,
+          durationMs: romTelemetryUnread.durationMs,
+          tokensIn: romTelemetryUnread.tokensIn,
+          tokensOut: romTelemetryUnread.tokensOut,
+          costUsd: romTelemetryUnread.costUsd,
+          nog_verdict: 'NOG_RETURN',
+          nog_reason: 'verdict_unreadable',
+        });
+
+        registerEvent(id, 'NOG_RETURN', { round, reason: 'verdict_unreadable', apendment_cycle: round });
         appendKiraEvent({
           event: 'NOG_ESCALATION',
           slice_id: id,
@@ -2853,7 +3005,7 @@ function invokeNog(id) {
           details: `Nog verdict unreadable for slice ${id} round ${round}`,
         });
 
-        // Create amendment for O'Brien with error details.
+        // Rewrite slice in-place for O'Brien with error details.
         handleNogReturn(id, rootId, round, branchName, donePath, updatedSliceContent, 'Nog verdict unreadable — manual review required', durationMs);
 
         print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} Nog verdict UNREADABLE${SYM.sep}treated as RETURN (round ${round})`);
@@ -2873,6 +3025,20 @@ function invokeNog(id) {
       if (verdict === 'ESCALATE') {
         // Nog determined ACs cannot be satisfied as written — escalate to O'Brien.
         log('warn', 'nog', { id, verdict: 'ESCALATE', round, durationMs, summary });
+
+        // Append round entry to PARKED file.
+        const romTelemetryEsc = extractRomTelemetry(doneReportContents);
+        appendRoundEntry(resolvedParkedPath, {
+          round,
+          commissioned_at: romTelemetryEsc.commissioned_at,
+          done_at: romTelemetryEsc.done_at,
+          durationMs: romTelemetryEsc.durationMs,
+          tokensIn: romTelemetryEsc.tokensIn,
+          tokensOut: romTelemetryEsc.tokensOut,
+          costUsd: romTelemetryEsc.costUsd,
+          nog_verdict: 'ESCALATE',
+          nog_reason: summary || 'Nog determined acceptance criteria cannot be satisfied as written',
+        });
 
         registerEvent(id, 'ESCALATED_TO_OBRIEN', {
           round,
@@ -2923,6 +3089,20 @@ function invokeNog(id) {
         log('info', 'nog', { id, verdict: 'PASS', round, durationMs, summary });
         registerEvent(id, 'NOG_PASS', { round });
 
+        // Append round entry to PARKED file.
+        const romTelemetry = extractRomTelemetry(doneReportContents);
+        appendRoundEntry(resolvedParkedPath, {
+          round,
+          commissioned_at: romTelemetry.commissioned_at,
+          done_at: romTelemetry.done_at,
+          durationMs: romTelemetry.durationMs,
+          tokensIn: romTelemetry.tokensIn,
+          tokensOut: romTelemetry.tokensOut,
+          costUsd: romTelemetry.costUsd,
+          nog_verdict: 'NOG_PASS',
+          nog_reason: summary || '',
+        });
+
         // Rename EVALUATING back to DONE so the existing evaluator picks it up.
         try {
           fs.renameSync(donePath, path.join(QUEUE_DIR, `${id}-DONE.md`));
@@ -2954,7 +3134,21 @@ function invokeNog(id) {
 
       // RETURN verdict.
       log('info', 'nog', { id, verdict: 'RETURN', round, durationMs, summary });
-      registerEvent(id, 'NOG_RETURN', { round });
+      registerEvent(id, 'NOG_RETURN', { round, apendment_cycle: round });
+
+      // Append round entry to PARKED file before handleNogReturn rewrites it.
+      const romTelemetryReturn = extractRomTelemetry(doneReportContents);
+      appendRoundEntry(resolvedParkedPath, {
+        round,
+        commissioned_at: romTelemetryReturn.commissioned_at,
+        done_at: romTelemetryReturn.done_at,
+        durationMs: romTelemetryReturn.durationMs,
+        tokensIn: romTelemetryReturn.tokensIn,
+        tokensOut: romTelemetryReturn.tokensOut,
+        costUsd: romTelemetryReturn.costUsd,
+        nog_verdict: 'NOG_RETURN',
+        nog_reason: summary || 'Nog review findings — see slice file',
+      });
 
       handleNogReturn(id, rootId, round, branchName, donePath, updatedSliceContent, summary || 'Nog review findings — see slice file', durationMs);
 
@@ -2962,7 +3156,7 @@ function invokeNog(id) {
       try { fs.renameSync(nogVerdictPath, path.join(TRASH_DIR, `${id}-NOG.md.return`)); } catch (_) {}
 
       print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} Nog RETURN${SYM.sep}Round ${round}${summary ? SYM.dash + summary : ''}`);
-      print(`${B.vert}    Amendment queued for O'Brien`);
+      print(`${B.vert}    Apendment queued for O'Brien`);
       print(`${B.bl}${B.sng.repeat(W - 1)}`);
       print('');
 
@@ -2990,83 +3184,74 @@ function invokeNog(id) {
 /**
  * handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceContent, summary, durationMs)
  *
- * RETURN verdict from Nog: create amendment slice for O'Brien.
+ * RETURN verdict from Nog: rewrite the existing slice file in-place with an
+ * "Apendment round N" section and rename back to QUEUED. The slice keeps its
+ * original ID — no new slice is created.
  */
 function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceContent, summary, durationMs) {
-  const inReviewPath = path.join(QUEUE_DIR, `${id}-IN_REVIEW.md`);
-  try {
-    fs.renameSync(evaluatingPath, inReviewPath);
-    log('info', 'state', { id, from: 'EVALUATING', to: 'IN_REVIEW', reason: 'nog_return' });
-  } catch (err) {
-    log('warn', 'nog', { id, msg: 'Failed to rename EVALUATING to IN_REVIEW', error: err.message });
-  }
-
   // Derive branch from rootId when DONE report didn't include one.
-  // Without a branch, invokeRom won't treat the amendment as an amendment.
   if (!branchName) {
     branchName = `slice/${rootId}`;
     log('warn', 'nog', { id, msg: `No branch in DONE report — deriving from rootId: ${branchName}` });
   }
 
-  // Write amendment slice QUEUED.
-  const nextId = nextSliceId(QUEUE_DIR);
-  const amendmentContent = [
-    '---',
-    `id: "${nextId}"`,
-    `title: "Nog return round ${round} — fix findings for slice ${rootId}"`,
-    `goal: "Address Nog code review findings from round ${round} for slice ${rootId}."`,
-    'from: nog',
-    'to: rom',
-    'priority: normal',
-    `created: "${new Date().toISOString()}"`,
-    `amendment: "${branchName}"`,
-    'timeout_min: null',
-    'type: amendment',
-    `root_commission_id: "${rootId}"`,
-    `amendment_cycle: ${round}`,
-    `branch: "${branchName}"`,
-    `round: ${round}`,
-    'status: QUEUED',
-    '---',
+  // Read the PARKED file (contains original slice + Nog reviews).
+  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const legacyParkedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
+  const resolvedParked = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
+  let parkedContent;
+  try {
+    parkedContent = fs.readFileSync(resolvedParked, 'utf-8');
+  } catch (_) {
+    parkedContent = sliceContent;
+  }
+
+  // Update frontmatter: set status=QUEUED, round, apendment_cycle, apendment, branch.
+  let updatedContent = updateFrontmatter(parkedContent, {
+    status: 'QUEUED',
+    round: String(round),
+    apendment_cycle: String(round),
+    apendment: branchName,
+    branch: branchName,
+  });
+
+  // Append the apendment round section to the body.
+  updatedContent += [
     '',
-    '## Objective',
+    `## Apendment round ${round}`,
     '',
     `This is a Nog code review return for slice ${rootId} (round ${round} of 5).`,
     '',
     '**IMPORTANT: The watcher handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
     '',
-    '## Nog review summary',
+    '### Nog review summary',
     '',
     summary,
     '',
-    '## Instructions',
+    '### Instructions',
     '',
     'Read the Nog review section appended to the slice file for detailed findings.',
     'Fix all issues identified by Nog, then write your DONE report.',
     '',
-    '## Original slice (with Nog review history)',
-    '',
-    sliceContent,
-    '',
-    '## Constraints',
-    '',
-    '- Do NOT create, checkout, or switch branches. The watcher manages the branch lifecycle.',
-    '- Commit your changes to the current branch only.',
-    '',
-    '## Success criteria',
+    '### Success criteria',
     '',
     '1. All Nog findings from the latest round are addressed.',
     `2. All original acceptance criteria from slice ${rootId} are met.`,
     '3. DONE report includes branch name in frontmatter.',
+    '',
   ].join('\n');
 
-  const amendmentQueuedPath = path.join(QUEUE_DIR, `${nextId}-QUEUED.md`);
+  // Write updated content back to QUEUED file (same ID).
+  const queuedPath = path.join(QUEUE_DIR, `${id}-QUEUED.md`);
   try {
-    fs.writeFileSync(amendmentQueuedPath, amendmentContent);
-    log('info', 'nog', { id, msg: `Wrote Nog amendment slice ${nextId}-QUEUED.md`, nextId, round, rootId });
+    fs.writeFileSync(queuedPath, updatedContent);
+    log('info', 'nog', { id, msg: `Rewrote slice ${id} as ${id}-QUEUED.md (apendment round ${round})`, round, rootId });
   } catch (err) {
-    log('warn', 'nog', { id, msg: 'Failed to write Nog amendment slice QUEUED', error: err.message });
+    log('warn', 'nog', { id, msg: 'Failed to write apendment QUEUED', error: err.message });
   }
+
+  // Remove the EVALUATING file (the old DONE renamed by poll loop).
+  try { fs.unlinkSync(evaluatingPath); } catch (_) {}
 }
 
 /**
@@ -3412,25 +3597,25 @@ function poll() {
   const pendingFiles = files
     .filter(f => f.endsWith('-QUEUED.md') || f.endsWith('-PENDING.md'))
     .sort((a, b) => {
-      // Priority sorting: amendments (rejections) jump the queue.
-      // Read frontmatter to check for amendment_cycle or references field.
-      const isAmendmentA = (() => {
+      // Priority sorting: apendments (rejections) jump the queue.
+      // Read frontmatter to check for apendment_cycle/amendment_cycle or references field.
+      const isApendmentA = (() => {
         try {
           const content = fs.readFileSync(path.join(QUEUE_DIR, a), 'utf-8');
           const meta = parseFrontmatter(content);
-          return meta && (meta.type === 'amendment' || !!meta.amendment || (meta.references && meta.references !== 'null'));
+          return meta && (meta.type === 'amendment' || !!meta.apendment || !!meta.amendment || (parseInt(meta.round, 10) > 1) || (meta.references && meta.references !== 'null'));
         } catch (_) { return false; }
       })();
-      const isAmendmentB = (() => {
+      const isApendmentB = (() => {
         try {
           const content = fs.readFileSync(path.join(QUEUE_DIR, b), 'utf-8');
           const meta = parseFrontmatter(content);
-          return meta && (meta.type === 'amendment' || !!meta.amendment || (meta.references && meta.references !== 'null'));
+          return meta && (meta.type === 'amendment' || !!meta.apendment || !!meta.amendment || (parseInt(meta.round, 10) > 1) || (meta.references && meta.references !== 'null'));
         } catch (_) { return false; }
       })();
-      // Amendments sort before fresh slices
-      if (isAmendmentA && !isAmendmentB) return -1;
-      if (!isAmendmentA && isAmendmentB) return 1;
+      // Apendments sort before fresh slices
+      if (isApendmentA && !isApendmentB) return -1;
+      if (!isApendmentA && isApendmentB) return 1;
       // Within same priority: lexicographic (numeric FIFO)
       return a.localeCompare(b);
     });

@@ -82,7 +82,7 @@ The slice file opens with a YAML frontmatter block, then the markdown body.
 
 | Field         | Type              | Description                                                                                       |
 |---------------|-------------------|---------------------------------------------------------------------------------------------------|
-| `amendment`   | string or null    | Prior branch name this slice reworks (e.g. `"slice/139"`). Absent / null for originals.           |
+| `apendment`   | string or null    | Prior branch name this slice reworks (e.g. `"slice/139"`). Absent / null for originals. Legacy: `amendment` is accepted on read. |
 | `depends_on`  | string or null    | Comma-separated IDs. Informational only — the watcher does not enforce dependency ordering.       |
 | `timeout_min` | integer or null   | Per-slice inactivity timeout. `null` means the watcher default (20 min) applies.                  |
 
@@ -239,17 +239,17 @@ O'Brien, on picking the slice back up in STAGED, reads the full history (origina
 
 ---
 
-## 10.1. Rejection-round sidecar (`handleAmendment` / `handleNogReturn`)
+## 10.1. Apendment-ID retention (`handleApendment` / `handleNogReturn`)
 
-When Nog rejects a slice with verdict `AMENDMENT_NEEDED` (or `RETURN`), the watcher performs two actions:
+When Nog rejects a slice with verdict `APENDMENT_NEEDED` (or `RETURN`), the watcher rewrites the existing slice file in-place:
 
-1. **Terminal sidecar rename.** The current round's evaluating file (`${id}-EVALUATING.md`) is renamed to `${id}-IN_REVIEW.md`. This file is a historical terminal artefact of that review round — it is no longer active in the pipeline and will not be picked up again. (Legacy files may still use the `-REVIEWED.md` suffix; both are accepted on read.)
+1. **In-place rewrite.** The PARKED file is updated: frontmatter gains `status: QUEUED`, `round: <N>`, `apendment_cycle: <N>`, `apendment: "<branch>"`, and a new `## Apendment round <N>` body section with the failed criteria / Nog findings. The file is written to `${id}-QUEUED.md`. The EVALUATING file is removed.
 
-2. **Amendment slice spawn.** A new amendment slice is written at `${nextId}-QUEUED.md` (per slice 146's naming), containing the failed criteria, amendment instructions, and the original acceptance criteria. This new slice re-enters the pipeline at state 2 (QUEUED) and is picked up by the watcher in the normal poll loop.
+2. **No new slice ID.** The slice keeps its original ID through all rounds. No call to `nextSliceId()` occurs in the apendment path. Register events carry `id: "<parent_id>", round: <N>, apendment_cycle: <N>`.
 
-**BR-invariant divergence.** This pattern splits the slice across two IDs: the original `${id}` (now terminated at `-IN_REVIEW.md`) and the amendment `${nextId}` (a fresh QUEUED file). BR invariant #1 ("one file per slice") expects a single file to track the full lifecycle. The current implementation instead creates a sidecar chain: `id → nextId → nextNextId`, linked by the `root_commission_id` frontmatter field.
+3. **Per-round telemetry.** Each Nog verdict (PASS, RETURN, ESCALATE, MAX_ROUNDS_EXHAUSTED) appends a `rounds[]` entry to the PARKED file's frontmatter with `{ round, commissioned_at, done_at, durationMs, tokensIn, tokensOut, costUsd, nog_verdict, nog_reason }`. Slice-level totals (`total_durationMs`, `total_tokensIn`, `total_tokensOut`, `total_costUsd`) are recomputed after each append.
 
-A future slice will converge this to the append-only pattern described in §8, where Nog's rejection is appended to the original slice file and the same ID re-enters the queue — eliminating the sidecar chain. Until then, the `root_commission_id` field and the `countReviewedCycles()` function (which counts `REVIEWED` register events across IDs sharing a root) provide the cross-ID linkage.
+**Migration note.** Register events and slice files written before D3 (slice 164) may use the old scheme: `type: "amendment"`, separate IDs for round 2+, `root_commission_id` linkage, `AMENDMENT_NEEDED` verdict string. Those historical records stand as-is. The watcher accepts both `amendment` and `apendment` field names on read. All new writes use `apendment`.
 
 ---
 

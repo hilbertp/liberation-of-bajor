@@ -372,7 +372,7 @@ If this fails, fallback: the relay container runs only the HTTP server + dashboa
 
 ### 7.5 REVISED — The real feasibility risk: Kira's evaluation loop
 
-~~Original spike priority was `claude -p` in Docker. That's been demoted.~~ The primary risk for Bet 2 is the Kira evaluation loop — how Kira automatically reads O'Brien's reports and decides ACCEPTED or AMENDMENT without generating notification spam to Philipp.
+~~Original spike priority was `claude -p` in Docker. That's been demoted.~~ The primary risk for Bet 2 is the Kira evaluation loop — how Kira automatically reads O'Brien's reports and decides ACCEPTED or APENDMENT without generating notification spam to Philipp.
 
 **The problem in detail:**
 
@@ -390,9 +390,9 @@ The relay already invokes O'Brien via `claude -p`. It uses the same mechanism fo
 
 1. Relay reads the original commission (success criteria from the committed PENDING file)
 2. Relay reads the DONE report
-3. Relay invokes `claude -p` with an evaluation prompt: "Read these ACs. Read this report. Decide ACCEPTED or AMENDMENT. Write your evaluation to {path}."
-4. Evaluation result gets written to `register.jsonl` (ACCEPTED or AMENDMENT event)
-5. If AMENDMENT: the evaluator writes a new PENDING commission to the queue → O'Brien picks it up → loop continues autonomously
+3. Relay invokes `claude -p` with an evaluation prompt: "Read these ACs. Read this report. Decide ACCEPTED or APENDMENT. Write your evaluation to {path}."
+4. Evaluation result gets written to `register.jsonl` (ACCEPTED or APENDMENT event)
+5. If APENDMENT: the evaluator writes a new PENDING commission to the queue → O'Brien picks it up → loop continues autonomously
 6. Dashboard reads the register → shows status within 5s
 7. Kira in Cowork reads the register on demand when Philipp asks "what happened to slice X?"
 
@@ -403,14 +403,14 @@ The relay already invokes O'Brien via `claude -p`. It uses the same mechanism fo
 
 **What this introduces (new risks — see 7.6, 7.7, 7.8):**
 - The evaluator runs with a cold context window — can it make reliable accept/reject decisions?
-- Amendment loops — what stops the evaluator and O'Brien from disagreeing forever?
+- Apendment loops — what stops the evaluator and O'Brien from disagreeing forever?
 - Kira in Cowork is now read-only on pipeline status — is that sufficient for Philipp?
 
 **Build order — spike-first, Cagan discipline:**
 
 1. **Spike S0: Evaluation quality** — can a cold `claude -p` invocation reliably evaluate a report against ACs? (Section 7.6)
 2. **Spike S1: `claude -p` in Docker** — auth, binary compat, filesystem access (Section 7.1)
-3. **Spike S2: Amendment loop bounds** — does the evaluator-O'Brien loop converge? (Section 7.7)
+3. **Spike S2: Apendment loop bounds** — does the evaluator-O'Brien loop converge? (Section 7.7)
 4. Relay server: unified watcher + HTTP + API + evaluation invocation
 5. Dashboard HTML
 6. Integration test + README
@@ -420,14 +420,14 @@ The relay already invokes O'Brien via `claude -p`. It uses the same mechanism fo
 **Risk:** Cold `claude -p` evaluation may make bad accept/reject decisions without organizational context.
 **Sisko decision (2026-04-08):** Not critical. Handle through iteration — if evaluation quality is off, enrich the prompt or tighten ACs. Not a gate.
 
-### 7.7 Amendment loop runaway
+### 7.7 Apendment loop runaway
 
 **Risk:** Evaluator and O'Brien disagree forever, burning tokens with no convergence.
 
-**Resolution (Sisko decision, 2026-04-08):** Hard cap at **n < 5** failed amendment cycles per commission. After the cap, the evaluation service escalates: Kira (the evaluation function) re-examines the situation, assesses whether the ACs still make sense in light of the evidence from the failed attempts, and flags the commission as STUCK with a reassessment note. The dashboard shows STUCK in red. Philipp intervenes.
+**Resolution (Sisko decision, 2026-04-08):** Hard cap at **n < 5** failed apendment cycles per commission. After the cap, the evaluation service escalates: Kira (the evaluation function) re-examines the situation, assesses whether the ACs still make sense in light of the evidence from the failed attempts, and flags the commission as STUCK with a reassessment note. The dashboard shows STUCK in red. Philipp intervenes.
 
 Implementation:
-- `maxAmendments: 5` in `bridge.config.json`
+- `maxApendments: 5` in `bridge.config.json`
 - After 5 failures, the evaluation service writes a STUCK event to the register with a summary: what was tried, why it failed, and whether the ACs need revision
 - This is a build-time feature, not a spike — implement in B1 (relay server)
 
@@ -515,13 +515,13 @@ These questions are from `HANDOFF-ARCHITECTURE-BRIEF.md`. Full answers are defer
 
 ## 10. Summary for Kira (Commission Slicing)
 
-No spikes. All identified risks (Docker auth, evaluation quality, amendment loops) are standard engineering problems with known solutions. Handle them during implementation.
+No spikes. All identified risks (Docker auth, evaluation quality, apendment loops) are standard engineering problems with known solutions. Handle them during implementation.
 
 ### Build slices
 
 | Slice | Title | What it delivers |
 |---|---|---|
-| **B0** | Evaluator in `watcher.js` | Second poll pass for DONE files; EVALUATING rename; `claude -p` evaluation prompt; ACCEPTED/REVIEWED/STUCK outcomes; amendment commission writer; cycle counter; crash recovery extension; CORS + `0.0.0.0` in `server.js`. **Urgent — unblocks Kira.** |
+| **B0** | Evaluator in `watcher.js` | Second poll pass for DONE files; EVALUATING rename; `claude -p` evaluation prompt; ACCEPTED/REVIEWED/STUCK outcomes; apendment commission writer; cycle counter; crash recovery extension; CORS + `0.0.0.0` in `server.js`. **Urgent — unblocks Kira.** |
 | **B1** | Unified relay server | `relay/server.js` merging watcher + HTTP + API; Dockerfile + docker-compose.yml. |
 | **B2** | Contributor dashboard | `relay/dashboard.html` with 5 elements + demo commission, polling `/api/bridge`. New states (ACCEPTED, REVIEWED, STUCK) rendered. |
 | **B3** | Integration + README | Full `docker compose up` flow tested; repo README rewritten for strangers |
@@ -542,7 +542,7 @@ Full design in `roles/kira/RESPONSE-EVALUATOR-ARCHITECTURE-FROM-DAX.md`. Summary
 2. Watcher renames DONE → EVALUATING → invokes evaluator via `claude -p`
 3. Evaluator reads `{id}-COMMISSION.md` (ACs) + EVALUATING file (report) → returns verdict
 4. If ACCEPTED: rename to ACCEPTED, write **merge PENDING** → O'Brien merges branch to main
-5. If AMENDMENT_NEEDED (cycle < 5): rename to REVIEWED, write **amendment PENDING** with same branch → O'Brien fixes → back to step 2
+5. If APENDMENT_NEEDED (cycle < 5): rename to REVIEWED, write **apendment PENDING** with same branch → O'Brien fixes → back to step 2
 6. If cycle ≥ 5: rename to STUCK → surfaces to Philipp
 
 **Key design points:**
@@ -550,7 +550,7 @@ Full design in `roles/kira/RESPONSE-EVALUATOR-ARCHITECTURE-FROM-DAX.md`. Summary
 - Uses `processing` flag — no concurrent `claude -p` calls
 - PENDING commissions always take priority over DONE evaluations
 - Merge commissions (`type: merge`) auto-accept — no evaluation needed
-- Branch name propagates through the entire cycle via DONE frontmatter → amendment/merge frontmatter
-- Amendment cap at 5 cycles per `root_commission_id`
+- Branch name propagates through the entire cycle via DONE frontmatter → apendment/merge frontmatter
+- Apendment cap at 5 cycles per `root_commission_id`
 - Crash recovery extended for EVALUATING files (rename back to DONE)
 - CORS + HOST fix in `server.js` also in B0 (unblocks Leeta)

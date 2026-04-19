@@ -22,13 +22,13 @@ The twist: most of the team is AI. Every agent starts every session fresh — no
 
 **Deep-skill developers** — you want to extend the system itself. The watcher, evaluator, queue state machine, and Ops Center are yours to modify. You can write briefs for O'Brien, change how he's invoked, add new evaluation logic, or build new roles.
 
-**Business roles** — PMs, product designers, coordinators. The handoff protocol, staging gate, and amendment cycle are your tools. You shape the work and verify the outcomes.
+**Business roles** — PMs, product designers, coordinators. The handoff protocol, staging gate, and apendment cycle are your tools. You shape the work and verify the outcomes.
 
 All three types work on the same team. The pipeline is designed so they don't step on each other.
 
 ### What you can do with it today
 
-**Run the full autonomous pipeline.** `docker compose up` starts the watcher and Ops Center. Drop a brief into the queue. The watcher picks it up, invokes O'Brien (Claude Code CLI), validates his DONE report, evaluates it against acceptance criteria, and either merges the branch to main or writes an amendment for another try. Five amendment cycles max, then it stops and asks the human.
+**Run the full autonomous pipeline.** `docker compose up` starts the watcher and Ops Center. Drop a brief into the queue. The watcher picks it up, invokes O'Brien (Claude Code CLI), validates his DONE report, evaluates it against acceptance criteria, and either merges the branch to main or writes an apendment for another try. Five apendment cycles max, then it stops and asks the human.
 
 **Stage and approve work before it executes.** Kira writes briefs to a staging area. Philipp reviews them in the Ops Center — approve, amend with a note, reject, or edit the brief body in place. Nothing executes until the human says go.
 
@@ -36,7 +36,7 @@ All three types work on the same team. The pipeline is designed so they don't st
 
 **Track economics across every role.** Every O'Brien session automatically logs tokens, cost, elapsed time, and human-equivalent hours. Cowork roles log manually via skill. The timesheet is a single JSONL file — one source of truth for what this team costs vs. what it delivers.
 
-**Trace every decision.** The register (`register.jsonl`) is an append-only audit trail. Every state transition — commissioned, done, error, accepted, merged, amendment, stuck — is a JSON line with timestamp, brief ID, and context. If it's not in the register, it didn't happen.
+**Trace every decision.** The register (`register.jsonl`) is an append-only audit trail. Every state transition — commissioned, done, error, accepted, merged, apendment, stuck — is a JSON line with timestamp, brief ID, and context. If it's not in the register, it didn't happen.
 
 **Hand off work between roles with zero friction.** One skill (`/handoff-to-teammate`) writes the artifact in the receiver's inbox, logs economics, stamps a session anchor, and tells the human who to open next. Every role starts every session by checking its inbox (`/check-handoffs`).
 
@@ -63,7 +63,7 @@ The discipline: attack the hardest risk first with the cheapest experiment. If i
 
 The most important feature of this team is the willingness to kill ideas that don't work. When someone proposes a product idea, the first question is never "how should we build this?" — it's "what's the hardest thing about this, and can we prove it's solvable before we do anything else?" When someone starts listing features: "which of these is the one that, if it doesn't work, makes all the others pointless?" When someone feels stuck: are they stuck on an easy problem (keep going) or a hard one (this is where discovery happens)?
 
-The amendment cap at 5 cycles is the automated version. If a brief can't be completed in 5 tries, the system stops throwing tokens at it and asks the human whether the idea still deserves to exist.
+The apendment cap at 5 cycles is the automated version. If a brief can't be completed in 5 tries, the system stops throwing tokens at it and asks the human whether the idea still deserves to exist.
 
 ---
 
@@ -125,13 +125,13 @@ The amendment cap at 5 cycles is the automated version. If a brief can't be comp
 |---|---|---|---|
 | **Kira** | Delivery Coordinator | `KIRA.md` (repo root) + `.claude/roles/kira/ROLE.md` | Active |
 
-**Kira** is the bridge between product intent and engineering execution. She decomposes architecture into briefs (scoped units of work), stages them for Philipp's review, and manages the amendment cycle.
+**Kira** is the bridge between product intent and engineering execution. She decomposes architecture into briefs (scoped units of work), stages them for Philipp's review, and manages the apendment cycle.
 
 **Kira's skills:** Global skills. Kira doesn't need specialized plugin skills — her function is coordination, and the global handoff/economics/debrief skills cover it.
 
-**Decision rights:** Brief decomposition, slice sizing, acceptance criteria, amendment decisions, escalation to Sisko.
+**Decision rights:** Brief decomposition, slice sizing, acceptance criteria, apendment decisions, escalation to Sisko.
 
-**Anti-patterns:** Micro-tasking, kitchen-sink briefs, vague objectives, "while you're at it" scope creep, rubber-stamping reports, accepting branch violations, skipping escalation at amendment limit, inventing requirements to avoid escalating.
+**Anti-patterns:** Micro-tasking, kitchen-sink briefs, vague objectives, "while you're at it" scope creep, rubber-stamping reports, accepting branch violations, skipping escalation at apendment limit, inventing requirements to avoid escalating.
 
 **What Kira does NOT do:** Rename queue files, delete queue files, write ERROR files, invoke `claude -p`, commit code, expand or contract scope unilaterally.
 
@@ -146,7 +146,7 @@ The amendment cap at 5 cycles is the automated version. If a brief can't be comp
 | **Reject** | Moved to trash. Dead. |
 | **Edit body** | Philipp edits in place, then approves. |
 
-**Amendment protocol:** Failed evaluations auto-generate amendment briefs. New ID, linked to root via `root_commission_id`, stays on original branch. Max 5 cycles, then STUCK → Philipp intervenes.
+**Apendment protocol:** Failed evaluations rewrite the slice in-place with an apendment round section. Same ID throughout. Per-round telemetry in `rounds[]`. Max 5 cycles, then STUCK → Philipp intervenes.
 
 ### Phase 4 — Implementation: building the thing
 
@@ -168,7 +168,7 @@ The amendment cap at 5 cycles is the automated version. If a brief can't be comp
 Queue state machine:
 ```
 PENDING → IN_PROGRESS → DONE → EVALUATING → ACCEPTED → MERGED
-                     ↘ ERROR                ↘ REVIEWED → new PENDING (amendment)
+                     ↘ ERROR                ↘ REVIEWED → QUEUED (apendment, same ID)
                                             ↘ STUCK (cycle 5+)
 ```
 
@@ -193,7 +193,7 @@ Configuration (`bridge/bridge.config.json`): poll interval, inactivity timeout, 
 
 **ACCEPTED** → register event → auto-merge (`git merge --no-ff`) → push. Merge failure: abort, register MERGE_FAILED, alert Philipp.
 
-**AMENDMENT_NEEDED** → register event → auto-write new PENDING amendment brief → O'Brien picks it up next cycle.
+**APENDMENT_NEEDED** → register event → rewrite slice in-place as QUEUED (apendment) → O'Brien picks it up next cycle.
 
 **STUCK** → cycle 5+ → register STUCK → watcher halts → Philipp intervenes.
 
@@ -292,7 +292,7 @@ inbox/        — Incoming work from other roles (written via /handoff-to-teamma
 
 ### What's built (Bet 2 — complete)
 
-The autonomous pipeline: staging gate → brief queue → watcher → O'Brien invocation → metrics validation → autonomous evaluation → auto-merge or amendment loop → STUCK escalation. Ops Center with live API. Economics infrastructure. Role system with identity, learning, inbox, and six global skills. Docker one-command startup. 65 briefs processed to date.
+The autonomous pipeline: staging gate → brief queue → watcher → O'Brien invocation → metrics validation → autonomous evaluation → auto-merge or apendment loop → STUCK escalation. Ops Center with live API. Economics infrastructure. Role system with identity, learning, inbox, and six global skills. Docker one-command startup. 65 briefs processed to date.
 
 ### What's next
 
@@ -305,7 +305,7 @@ The autonomous pipeline: staging gate → brief queue → watcher → O'Brien in
 | **Vic** (brand voice) | Brand system and tone guidelines across all public-facing surfaces |
 | **Slicelog panel** | Visualize `timesheet.jsonl` economics in the Ops Center — token cost per brief, trends, efficiency |
 | **Model routing** | Route simple briefs to cheaper models, reserve expensive models for hard problems. Needs measurement first. |
-| **`maxAmendments` in config** | Currently hardcoded at 5 — should be in `bridge.config.json` |
+| **`maxApendments` in config** | Currently hardcoded at 5 — should be in `bridge.config.json` |
 | **Team chat room** | Multi-role alignment without bouncing handoff files back and forth |
 | **Ruflo integration** | Bet 3 may run through Ruflo — smart model routing, agent swarms, workflow learning. Open question: does it preserve files-as-source-of-truth? |
 
