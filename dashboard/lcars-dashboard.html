@@ -2738,11 +2738,9 @@
         }
         footerEl.style.display = 'none';
         pausedFooter.style.display = '';
-        // Reset abort confirm state
-        const abortConfirm = document.getElementById('abort-confirm');
-        const abortBtn = document.getElementById('abort-btn');
-        if (abortConfirm) abortConfirm.style.display = 'none';
-        if (abortBtn) abortBtn.style.display = '';
+        // NOTE: Do NOT reset abort-confirm state here — the render loop runs every
+        // poll cycle and would hide the confirmation before the user can click "Yes".
+        // The confirmAbort() and cancelAbort() handlers manage their own UI state.
 
         // Update status text
         const statusEl = document.getElementById('rom-build-status');

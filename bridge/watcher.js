@@ -1977,6 +1977,18 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
         }
         // ─────────────────────────────────────────────────────────────────────
 
+        // ── Manual abort guard ─────���────────────────────────────────────────
+        // When handleAbort() SIGKILLs the child, the promise rejects and lands
+        // here. But handleAbort already emitted ROM_ABORTED and cleaned up.
+        // Suppress the ghost ERROR so it doesn't pollute metrics or create a
+        // false-positive ERROR.md file.
+        const latestForAbortGuard = getLatestLifecycleEvent(id);
+        if (latestForAbortGuard && latestForAbortGuard.event === 'ROM_ABORTED' && latestForAbortGuard.reason === 'manual') {
+          log('info', 'control', { id, msg: 'Suppressing ghost ERROR — slice was manually aborted', reason });
+          closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'Manually aborted');
+          recordSessionResult(false, tokensIn, tokensOut, costUsd);
+        } else {
+        // ──────���──────────────────────────────────────────────────────────────
         writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra);
         log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
         registerEvent(id, 'ERROR', {
@@ -1999,6 +2011,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
         updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
         closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, reasonDisplay);
         recordSessionResult(false, tokensIn, tokensOut, costUsd);
+        }
       }
 
       printSessionSummary();
@@ -3524,6 +3537,28 @@ function getLatestRegisterEvent(sliceId) {
 }
 
 /**
+ * getLatestLifecycleEvent(sliceId)
+ *
+ * Returns the latest *lifecycle* register event for a slice, skipping control-request
+ * events (PAUSE_REQUESTED, RESUME_REQUESTED, ABORT_REQUESTED, and any other _REQUESTED
+ * variants). This prevents dashboard-emitted request events from poisoning precondition
+ * checks in handlePause/handleResume/handleAbort.
+ */
+function getLatestLifecycleEvent(sliceId) {
+  const id = String(sliceId);
+  try {
+    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        if (entry.id === id && !entry.event.endsWith('_REQUESTED')) return entry;
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return null;
+}
+
+/**
  * getRoundFromRegister(sliceId)
  *
  * Derives the current round for a slice from COMMISSIONED events in the register.
@@ -3563,10 +3598,14 @@ function handlePause(sliceId) {
     return { ok: false, error: `Slice ${id} has no live Rom subprocess — cannot pause` };
   }
 
-  // Check not already paused.
-  const latest = getLatestRegisterEvent(id);
+  // Check latest lifecycle event — must be a live-Rom state, not already paused or terminal.
+  const latest = getLatestLifecycleEvent(id);
   if (latest && latest.event === 'ROM_PAUSED') {
     return { ok: false, error: `Slice ${id} is already paused` };
+  }
+  const liveStates = ['COMMISSIONED', 'ROM_STARTED', 'ROM_RESUMED'];
+  if (!latest || !liveStates.includes(latest.event)) {
+    return { ok: false, error: `Slice ${id} is not in a pausable state (latest lifecycle: ${latest ? latest.event : 'none'})` };
   }
 
   try {
@@ -3589,8 +3628,10 @@ function handlePause(sliceId) {
 function handleResume(sliceId) {
   const id = String(sliceId);
 
-  // Precondition: latest event must be ROM_PAUSED.
-  const latest = getLatestRegisterEvent(id);
+  // Precondition: latest *lifecycle* event must be ROM_PAUSED.
+  // Uses getLatestLifecycleEvent to skip dashboard-emitted _REQUESTED events
+  // that would otherwise poison this check (e.g. RESUME_REQUESTED after ROM_PAUSED).
+  const latest = getLatestLifecycleEvent(id);
   if (!latest || latest.event !== 'ROM_PAUSED') {
     return { ok: false, error: `Slice ${id} is not paused — cannot resume` };
   }
@@ -3629,7 +3670,7 @@ function handleAbort(sliceId) {
   const entry = activeChildren.get(id);
   if (entry && entry.child && entry.child.exitCode === null) {
     // If paused, resume first so SIGKILL is delivered immediately.
-    const latest = getLatestRegisterEvent(id);
+    const latest = getLatestLifecycleEvent(id);
     if (latest && latest.event === 'ROM_PAUSED') {
       try { process.kill(entry.child.pid, 'SIGCONT'); } catch (_) {}
     }
