@@ -36,3 +36,6 @@ bridge/logs/
 
 # Kira event drain — append-only runtime file
 bridge/kira-events.jsonl
+
+# Worktree rescue artifacts (created at runtime on no_report failures)
+bridge/worktree-rescue/

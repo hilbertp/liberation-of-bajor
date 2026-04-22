@@ -1387,6 +1387,159 @@ function cleanupWorktree(id, branchName) {
 }
 
 /**
+ * isRomSelfTerminated(reason)
+ *
+ * Returns true for any of the 4 classified rom-self-termination reasons
+ * AND for the legacy 'no_report' string (historical register events).
+ */
+function isRomSelfTerminated(reason) {
+  return reason === 'no_report' ||
+    reason === 'rom_self_terminated_empty' ||
+    reason === 'rom_self_terminated_uncommitted' ||
+    reason === 'rom_self_terminated_committed' ||
+    reason === 'rom_self_terminated_mixed';
+}
+
+/**
+ * classifyNoReportExit(id, worktreePath, branchName)
+ *
+ * Inspects git state in the worktree to classify why Rom exited without a
+ * DONE file. Returns { reason, hasCommits, hasDiff, commits, diffSummary, porcelain }.
+ */
+function classifyNoReportExit(id, worktreePath, branchName) {
+  const result = { reason: 'rom_self_terminated_empty', hasCommits: false, hasDiff: false, commits: [], diffSummary: '', porcelain: '' };
+
+  if (!fs.existsSync(worktreePath)) {
+    log('warn', 'worktree', { id, msg: 'classifyNoReportExit: worktree dir missing — treating as empty' });
+    return result;
+  }
+
+  // Check for commits beyond main
+  try {
+    const logOutput = execSync(`git log main..${branchName} --oneline`, { cwd: worktreePath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    if (logOutput) {
+      result.hasCommits = true;
+      result.commits = logOutput.split('\n');
+    }
+  } catch (_) {}
+
+  // Check for uncommitted changes
+  try {
+    result.porcelain = execSync('git status --porcelain', { cwd: worktreePath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    if (result.porcelain) {
+      result.hasDiff = true;
+    }
+  } catch (_) {}
+
+  // Get diff summary (truncated)
+  try {
+    const diff = execSync('git diff HEAD', { cwd: worktreePath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const lines = diff.split('\n');
+    result.diffSummary = lines.slice(0, 200).join('\n') + (lines.length > 200 ? '\n…(truncated)' : '');
+  } catch (_) {}
+
+  // Classify
+  if (result.hasCommits && result.hasDiff) {
+    result.reason = 'rom_self_terminated_mixed';
+  } else if (result.hasCommits) {
+    result.reason = 'rom_self_terminated_committed';
+  } else if (result.hasDiff) {
+    result.reason = 'rom_self_terminated_uncommitted';
+  }
+  // else: remains rom_self_terminated_empty
+
+  return result;
+}
+
+/**
+ * rescueWorktree(id, branchName, classification, stdout, stderr)
+ *
+ * Moves the worktree to bridge/worktree-rescue/<id>/ instead of wiping it.
+ * Writes a RESCUE.md summary. For committed/mixed classifications, preserves
+ * the branch ref. Returns the rescue path.
+ */
+function rescueWorktree(id, branchName, classification, stdout, stderr) {
+  const rescueBase = path.join(PROJECT_DIR, 'bridge', 'worktree-rescue');
+  fs.mkdirSync(rescueBase, { recursive: true });
+
+  let rescuePath = path.join(rescueBase, String(id));
+  if (fs.existsSync(rescuePath)) {
+    rescuePath = `${rescuePath}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  }
+
+  const wtPath = getWorktreePath(id);
+
+  // Move worktree directory to rescue location
+  try {
+    fs.renameSync(wtPath, rescuePath);
+  } catch (err) {
+    log('error', 'worktree', { id, msg: `rescueWorktree: failed to move worktree to ${rescuePath}`, error: err.message });
+    return null;
+  }
+
+  // Prune git worktree registry (the dir is gone from its original location)
+  try { execSync('git worktree prune', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+
+  // For empty/uncommitted (no commits on branch), clean up branch ref
+  if (!classification.hasCommits && branchName) {
+    try {
+      branchName = sanitizeBranchName(branchName);
+      const refPath = path.join(PROJECT_DIR, '.git', 'refs', 'heads', ...branchName.split('/'));
+      if (fs.existsSync(refPath)) {
+        fs.renameSync(refPath, refPath + '.dead');
+      }
+    } catch (_) {}
+  }
+  // For committed/mixed: keep branch ref alive
+
+  // Write RESCUE.md summary
+  const truncate = (s, n) => (s && s.length > n ? '…' + s.slice(-n) : s || '(empty)');
+  const rescueMd = [
+    '---',
+    `id: "${id}"`,
+    `rescued: "${new Date().toISOString()}"`,
+    `reason: "${classification.reason}"`,
+    `has_commits: ${classification.hasCommits}`,
+    `has_diff: ${classification.hasDiff}`,
+    '---',
+    '',
+    '## Commits (main..slice)',
+    '```',
+    classification.commits.length ? classification.commits.join('\n') : '(none)',
+    '```',
+    '',
+    '## Git status --porcelain',
+    '```',
+    classification.porcelain || '(clean)',
+    '```',
+    '',
+    '## Diff summary (first 200 lines)',
+    '```diff',
+    classification.diffSummary || '(none)',
+    '```',
+    '',
+    '## Stdout tail',
+    '```',
+    truncate(stdout, 500),
+    '```',
+    '',
+    '## Stderr tail',
+    '```',
+    truncate(stderr, 500),
+    '```',
+  ].join('\n');
+
+  try {
+    fs.writeFileSync(path.join(rescuePath, 'RESCUE.md'), rescueMd, 'utf8');
+  } catch (err) {
+    log('warn', 'worktree', { id, msg: 'Failed to write RESCUE.md', error: err.message });
+  }
+
+  log('info', 'worktree', { id, msg: `Rescued worktree to ${rescuePath}`, reason: classification.reason });
+  return rescuePath;
+}
+
+/**
  * cleanupDeadWorktrees()
  *
  * Startup scan: removes .dead entries left by cleanupWorktree from a prior
@@ -1821,22 +1974,36 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             recordSessionResult(true, tokensIn, tokensOut, costUsd);
           }
         } else {
-          // Rom exited 0 but wrote no DONE file — write an ERROR report with reason "no_report".
+          // Rom exited 0 but wrote no DONE file — classify and rescue/wipe.
+          const noReportClass = classifyNoReportExit(id, worktreePath, sliceBranch);
+          const classifiedReason = noReportClass.reason;
           log('warn', 'complete', {
             id,
-            msg: "Rom exited cleanly but wrote no DONE file — writing ERROR (no_report)",
-            reason: 'no_report',
+            msg: `Rom exited cleanly but wrote no DONE file — classified as ${classifiedReason}`,
+            reason: classifiedReason,
+            hasCommits: noReportClass.hasCommits,
+            hasDiff: noReportClass.hasDiff,
             durationMs,
           });
-          writeErrorFile(errorPath, id, 'no_report', null, stdout, stderr, { durationMs });
-          log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: 'no_report' });
+
+          // Rescue or wipe based on classification
+          let rescuePath = null;
+          if (classifiedReason !== 'rom_self_terminated_empty') {
+            rescuePath = rescueWorktree(id, sliceBranch, noReportClass, stdout, stderr);
+          } else {
+            try { cleanupWorktree(id, sliceBranch); } catch (_) {}
+          }
+
+          writeErrorFile(errorPath, id, classifiedReason, null, stdout, stderr, { durationMs, rescue_path: rescuePath });
+          log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason: classifiedReason });
           registerEvent(id, 'ERROR', {
-            reason: 'no_report',
+            reason: classifiedReason,
             phase: 'rom_invocation',
             command: [config.claudeCommand, ...config.claudeArgs].join(' '),
             exit_code: null,
             stderr_tail: truncStderr(stderr),
             durationMs,
+            rescue_path: rescuePath,
           });
           appendKiraEvent({
             event: 'ERROR',
@@ -1844,7 +2011,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             root_id: sliceMeta.root_commission_id || null,
             cycle: null,
             branch: sliceBranch || null,
-            details: `Slice ${id} errored: no_report`,
+            details: `Slice ${id} errored: ${classifiedReason}${rescuePath ? ` (rescued to ${rescuePath})` : ''}`,
           });
           // timesheet write point 2 — update orchestrator row at terminal state
           updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
@@ -3352,8 +3519,8 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
   frontmatter.push('---');
 
   const truncate = (s, n) => (s && s.length > n ? '…' + s.slice(-n) : s || '(empty)');
-  const stdoutBody = reason === 'no_report' ? truncate(stdout, 500) : (stdout || '(empty)');
-  const stderrBody = reason === 'no_report' ? truncate(stderr, 500) : (stderr || '(empty)');
+  const stdoutBody = isRomSelfTerminated(reason) ? truncate(stdout, 500) : (stdout || '(empty)');
+  const stderrBody = isRomSelfTerminated(reason) ? truncate(stderr, 500) : (stderr || '(empty)');
 
   const detail = reason === 'timeout'
     ? 'The process was killed after exceeding the configured timeout.'
@@ -3361,8 +3528,8 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
       ? `The process was killed after ${extra && extra.lastActivitySecondsAgo != null ? extra.lastActivitySecondsAgo : '?'}s of no stdout/stderr output (limit: ${extra && extra.inactivityLimitMinutes != null ? extra.inactivityLimitMinutes : '?'} min).`
       : reason === 'crash'
         ? `The process exited with a non-zero status (exit code ${exitCode ?? 'unknown'}).`
-        : reason === 'no_report'
-          ? 'The process exited cleanly but wrote no DONE file.'
+        : isRomSelfTerminated(reason)
+          ? `The process exited cleanly but wrote no DONE file (${reason}).${extra && extra.rescue_path ? ' Worktree rescued to ' + extra.rescue_path + '.' : ''}`
           : `Slice frontmatter validation failed. Missing fields: ${(extra && extra.missingFields || []).join(', ')}.`;
 
   const content = [
@@ -4395,4 +4562,4 @@ if (require.main === module) {
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { nextSliceId, getQueueSnapshot };
+module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated };
