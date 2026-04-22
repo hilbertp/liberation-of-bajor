@@ -7,6 +7,7 @@ const { appendTimesheet, updateTimesheet, rebuildMerged } = require('./slicelog'
 const { appendKiraEvent } = require('./kira-events');
 const { buildNogPrompt } = require('./nog-prompt');
 const { translateEvent, translateVerdict, resetDedupeState } = require('./lifecycle-translate');
+const gitFinalizer = require('./git-finalizer');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1162,7 +1163,7 @@ function selfRestart(reason) {
  */
 function ensureMainIsFresh(id) {
   try {
-    execSync('git fetch origin main', { cwd: PROJECT_DIR, stdio: 'pipe', timeout: 15000 });
+    gitFinalizer.runGit('git fetch origin main', { slice_id: id, op: 'ensureMainIsFresh_fetch', execOpts: { stdio: 'pipe', timeout: 15000 } });
   } catch (err) {
     log('warn', 'git_safety', { id, msg: 'fetch origin/main failed — proceeding with local main', error: err.message });
     return;
@@ -1187,13 +1188,13 @@ function ensureMainIsFresh(id) {
       msg: `main has diverged from origin (${aheadList.length} local-only commit(s)) — hard-resetting to origin/main`,
       discarded: aheadList,
     });
-    execSync('git reset --hard origin/main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit('git reset --hard origin/main', { slice_id: id, op: 'ensureMainIsFresh_reset', execOpts: { stdio: 'pipe' } });
     const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
     log('info', 'git_safety', { id, msg: `Hard-reset complete: main now at ${after.slice(0, 8)}` });
     selfRestart(`main was diverged and has been hard-reset to origin/main at ${after.slice(0, 8)}`);
   } else {
     // Local is behind origin — safe fast-forward
-    execSync('git merge --ff-only origin/main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit('git merge --ff-only origin/main', { slice_id: id, op: 'ensureMainIsFresh_ff', execOpts: { stdio: 'pipe' } });
     const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
     log('info', 'git_safety', { id, msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}` });
   }
@@ -1319,7 +1320,7 @@ function createWorktree(id, branchName) {
           const oldPath = wtLine.replace('worktree ', '');
           if (oldPath !== PROJECT_DIR) {
             try { fs.rmSync(oldPath, { recursive: true, force: true }); } catch (_) {}
-            execSync('git worktree prune', { cwd: PROJECT_DIR, stdio: 'pipe' });
+            gitFinalizer.runGit('git worktree prune', { slice_id: id, op: 'createWorktree_prune', execOpts: { stdio: 'pipe' } });
             log('info', 'worktree', { id, msg: `Pruned stale worktree at ${oldPath} for branch ${branchName}` });
           }
         }
@@ -1327,12 +1328,13 @@ function createWorktree(id, branchName) {
     } catch (_) {}
 
     // Existing branch (apendment or retry)
-    execSync(`git worktree add "${wtPath}" ${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit(`git worktree add "${wtPath}" ${branchName}`, { slice_id: id, op: 'createWorktree', execOpts: { stdio: 'pipe' }, worktreePath: wtPath });
   } else {
     // New branch from main
-    execSync(`git worktree add "${wtPath}" -b ${branchName} main`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit(`git worktree add "${wtPath}" -b ${branchName} main`, { slice_id: id, op: 'createWorktree', execOpts: { stdio: 'pipe' }, worktreePath: wtPath });
   }
 
+  registerEvent(id, 'WORKTREE_CREATED', { path: wtPath, branch: branchName });
   log('info', 'worktree', { id, msg: `Created worktree at ${wtPath} on branch ${branchName}`, branchExists });
   return wtPath;
 }
@@ -1357,7 +1359,7 @@ function cleanupWorktree(id, branchName) {
 
   // Prune so git knows the worktree is gone
   try {
-    execSync('git worktree prune', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit('git worktree prune', { slice_id: id, op: 'cleanupWorktree', execOpts: { stdio: 'pipe' } });
   } catch (_) {}
 
   // Step 2: FUSE-safe cleanup of .git/worktrees/{id}/
@@ -1383,6 +1385,7 @@ function cleanupWorktree(id, branchName) {
     }
   }
 
+  registerEvent(id, 'WORKTREE_REMOVED', { path: wtPath });
   log('info', 'worktree', { id, msg: `Cleaned up worktree for slice ${id}` });
 }
 
@@ -1478,7 +1481,7 @@ function rescueWorktree(id, branchName, classification, stdout, stderr) {
   }
 
   // Prune git worktree registry (the dir is gone from its original location)
-  try { execSync('git worktree prune', { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+  try { gitFinalizer.runGit('git worktree prune', { slice_id: id, op: 'rescueWorktree', execOpts: { stdio: 'pipe' } }); } catch (_) {}
 
   // For empty/uncommitted (no commits on branch), clean up branch ref
   if (!classification.hasCommits && branchName) {
@@ -1729,13 +1732,17 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
   let worktreePath;
   try {
     ensureMainIsFresh(id);
-    worktreePath = createWorktree(id, sliceBranch);
+    worktreePath = gitFinalizer.createWorktreeWithRetry(createWorktree, id, sliceBranch);
     log('info', 'branch', { id, msg: `Worktree ready at ${worktreePath} on branch ${sliceBranch}`, isApendment });
   } catch (err) {
-    const reason = isApendment ? 'apendment_branch_checkout_failed' : 'branch_creation_failed';
-    log('error', 'branch', { id, msg: `Failed to create worktree for ${sliceBranch} — aborting invocation`, error: err.message });
+    // If retry exhaustion enriched the error, use the stale reason
+    const reason = err.retryReason
+      ? err.retryReason
+      : (isApendment ? 'apendment_branch_checkout_failed' : 'branch_creation_failed');
+    const extraFields = err.lockInfo || {};
+    log('error', 'branch', { id, msg: `Failed to create worktree for ${sliceBranch} — aborting invocation`, error: err.message, reason });
     const errorPath2 = path.join(QUEUE_DIR, `${id}-ERROR.md`);
-    writeErrorFile(errorPath2, id, reason, err, '', '', {});
+    writeErrorFile(errorPath2, id, reason, err, '', '', extraFields);
     log('info', 'state', { id, from: 'IN_PROGRESS', to: 'ERROR', reason });
     registerEvent(id, 'ERROR', {
       reason,
@@ -2663,11 +2670,11 @@ function mergeBranch(id, branchName, title) {
     // This runs on local FS (/tmp), not FUSE. Resolves any main changes
     // since the branch was created.
     const oldMain = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-    execSync(`git merge main -m "${commitMsg.replace(/"/g, '\\"')}"`, { cwd: wtPath, stdio: 'pipe' });
+    gitFinalizer.runGit(`git merge main -m "${commitMsg.replace(/"/g, '\\"')}"`, { slice_id: id, op: 'mergeBranch_merge', cwd: wtPath, execOpts: { stdio: 'pipe' } });
 
     // ── Step 2: Fast-forward main to the merge result ──────────────────
     const newSha = execSync(`git rev-parse ${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-    execSync(`git update-ref refs/heads/main ${newSha}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit(`git update-ref refs/heads/main ${newSha}`, { slice_id: id, op: 'mergeBranch_updateRef', execOpts: { stdio: 'pipe' } });
 
     // ── Step 3: Sync changed files from worktree to PROJECT_DIR ────────
     // FUSE handles writes fine (writeFileSync truncates in-place).
@@ -2693,14 +2700,14 @@ function mergeBranch(id, branchName, title) {
     }
 
     // ── Step 4: Update index to match new main ─────────────────────────
-    execSync('git read-tree main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit('git read-tree main', { slice_id: id, op: 'mergeBranch_readTree', execOpts: { stdio: 'pipe' } });
 
     // ── Post-merge verification ─────────────────────────────────────────
     // Safety net: ensure disk matches committed state.
     verifyWorkingTreeMatchesMain(id, 'merge');
 
     try {
-      execSync('git push origin main', { cwd: PROJECT_DIR, stdio: 'pipe' });
+      gitFinalizer.runGit('git push origin main', { slice_id: id, op: 'mergeBranch_push', execOpts: { stdio: 'pipe' } });
     } catch (pushErr) {
       // Push failure is non-fatal — the merge succeeded locally.
       log('warn', 'merge', { id, msg: 'git push origin main failed (merge succeeded locally)', error: pushErr.message });
@@ -3999,6 +4006,11 @@ function poll() {
 
   if (processing) return;
 
+  // Cycle-start sweep: prune orphan locks and worktree dirs before dispatch.
+  try { gitFinalizer.sweepStaleResources(); } catch (err) {
+    log('warn', 'sweep', { msg: 'sweepStaleResources threw', error: err.message });
+  }
+
   // Rate limit gate: pause dispatch until the API limit resets.
   if (rateLimitUntil) {
     const remaining = rateLimitUntil - Date.now();
@@ -4542,6 +4554,9 @@ if (require.main === module) {
 
   // Remove stale git lock files from prior crashes before any git operations.
   clearStaleGitLocks();
+
+  // Initialise git-finalizer with orchestrator dependencies.
+  gitFinalizer.init({ PROJECT_DIR, registerEvent, log, HEARTBEAT_FILE, QUEUE_DIR });
 
   // Clean up .dead worktree/branch entries from prior sessions.
   cleanupDeadWorktrees();
