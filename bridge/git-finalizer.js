@@ -20,8 +20,8 @@ const { execSync } = require('child_process');
 // Constants
 // ---------------------------------------------------------------------------
 
-const WORKTREE_BASE = '/tmp/ds9-worktrees';
-const WORKTREE_BASE_PRIVATE = '/private/tmp/ds9-worktrees';
+let WORKTREE_BASE = '/tmp/ds9-worktrees';
+let WORKTREE_BASE_PRIVATE = '/private/tmp/ds9-worktrees';
 
 // Path guard: rm -rf MUST only target dirs under the worktree base.
 function assertWorktreePath(p) {
@@ -52,6 +52,11 @@ function init(deps) {
   log = deps.log;
   HEARTBEAT_FILE = deps.HEARTBEAT_FILE;
   QUEUE_DIR = deps.QUEUE_DIR;
+  // Allow tests to override worktree base for isolation
+  if (deps.WORKTREE_BASE) {
+    WORKTREE_BASE = deps.WORKTREE_BASE;
+    WORKTREE_BASE_PRIVATE = deps.WORKTREE_BASE;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +80,8 @@ function lockExists() {
  */
 function isGitProcessAlive() {
   try {
-    const out = execSync(`lsof "${indexLockPath()}" 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 });
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('lsof', [indexLockPath()], { encoding: 'utf-8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] });
     return out.trim().length > 0;
   } catch (_) {
     return false;
@@ -180,6 +186,9 @@ function runGit(cmd, opts) {
  *
  * 1. Stale lock check
  * 2. Stale worktree check
+ *
+ * Returns true if dispatch should proceed, false if dispatch should be skipped
+ * (e.g. STALE_LOCK_DETECTED — something may be in flight).
  */
 function sweepStaleResources() {
   // ── 1. Stale lock check ──────────────────────────────────────────────
@@ -251,16 +260,18 @@ function sweepStaleResources() {
     } else {
       registerEvent('0', 'STALE_LOCK_DETECTED', diagnostics);
       log('info', 'sweep', { msg: 'Cycle-start: stale lock detected but declined to prune', diagnostics });
+      // Something is in flight — skip dispatch this tick
+      return false;
     }
   }
 
   // ── 2. Stale worktree check ──────────────────────────────────────────
   let worktreeDirs;
   try {
-    if (!fs.existsSync(WORKTREE_BASE)) return;
+    if (!fs.existsSync(WORKTREE_BASE)) return true;
     worktreeDirs = fs.readdirSync(WORKTREE_BASE);
   } catch (_) {
-    return;
+    return true;
   }
 
   const gitWorktreesDir = path.join(PROJECT_DIR, '.git', 'worktrees');
@@ -310,6 +321,8 @@ function sweepStaleResources() {
       }
     }
   }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------

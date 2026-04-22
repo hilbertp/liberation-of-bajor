@@ -802,17 +802,17 @@ const BRANCH_NAME_REGEX = /^[a-zA-Z0-9._\/-]+$/;
  */
 function autoCommitDirtyTree(reason) {
   try {
-    const status = execSync('git status --porcelain', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const status = gitFinalizer.runGit('git status --porcelain', { slice_id: '0', op: 'autoCommit_status', encoding: 'utf-8' }).trim();
     // Only care about modified tracked files (M, D, R) — not untracked (??)
     const trackedChanges = status.split('\n').filter(l => l && !l.startsWith('??'));
     if (trackedChanges.length === 0) return false;
 
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const branch = gitFinalizer.runGit('git rev-parse --abbrev-ref HEAD', { slice_id: '0', op: 'autoCommit_branch', encoding: 'utf-8' }).trim();
     const msg = `autocommit: ${reason} [${trackedChanges.length} file(s) on ${branch}]`;
     log('warn', 'git_safety', { msg, files: trackedChanges.map(l => l.trim()).join(', ') });
 
-    execSync('git add -u', { cwd: PROJECT_DIR, stdio: 'pipe' }); // -u: only tracked files
-    execSync(`git commit -m "${msg.replace(/"/g, '\\"')}"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit('git add -u', { slice_id: '0', op: 'autoCommit_add', execOpts: { stdio: 'pipe' } });
+    gitFinalizer.runGit(`git commit -m "${msg.replace(/"/g, '\\"')}"`, { slice_id: '0', op: 'autoCommit_commit', execOpts: { stdio: 'pipe' } });
     log('info', 'git_safety', { msg: `Auto-committed ${trackedChanges.length} files to ${branch}` });
     return true;
   } catch (err) {
@@ -1061,14 +1061,14 @@ function verifyBranchState(id, expectedBranch, cwd) {
   const issues = [];
 
   // Check 1: correct branch
-  const current = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8' }).trim();
+  const current = gitFinalizer.runGit('git rev-parse --abbrev-ref HEAD', { slice_id: id || '0', op: 'verifyBranch_head', cwd, encoding: 'utf-8' }).trim();
   if (current !== expectedBranch) {
     issues.push(`HEAD is on '${current}', expected '${expectedBranch}'`);
   }
 
   // Check 2: commits ahead of main
   try {
-    const ahead = execSync(`git rev-list main..${expectedBranch} --count`, { cwd, encoding: 'utf-8' }).trim();
+    const ahead = gitFinalizer.runGit(`git rev-list main..${expectedBranch} --count`, { slice_id: id || '0', op: 'verifyBranch_ahead', cwd, encoding: 'utf-8' }).trim();
     if (parseInt(ahead, 10) === 0) {
       issues.push(`Branch ${expectedBranch} has no commits ahead of main`);
     }
@@ -1078,11 +1078,11 @@ function verifyBranchState(id, expectedBranch, cwd) {
 
   // Check 3: merge-base is on main (branch forked from main, not from some other branch)
   try {
-    const mergeBase = execSync(`git merge-base main ${expectedBranch}`, { cwd, encoding: 'utf-8' }).trim();
-    const mainTip   = execSync('git rev-parse main', { cwd, encoding: 'utf-8' }).trim();
+    const mergeBase = gitFinalizer.runGit(`git merge-base main ${expectedBranch}`, { slice_id: id || '0', op: 'verifyBranch_mergeBase', cwd, encoding: 'utf-8' }).trim();
+    const mainTip   = gitFinalizer.runGit('git rev-parse main', { slice_id: id || '0', op: 'verifyBranch_mainTip', cwd, encoding: 'utf-8' }).trim();
     // The merge-base should be the main tip at branch creation time.
     // Verify it's reachable from main.
-    const isOnMain = execSync(`git branch --contains ${mergeBase}`, { cwd, encoding: 'utf-8' });
+    const isOnMain = gitFinalizer.runGit(`git branch --contains ${mergeBase}`, { slice_id: id || '0', op: 'verifyBranch_contains', cwd, encoding: 'utf-8' });
     if (!isOnMain.includes('main')) {
       issues.push(`Branch merge-base ${mergeBase.slice(0,8)} is not on main — possible stale fork`);
     }
@@ -1127,7 +1127,7 @@ function clearStaleGitLocks() {
   }
   // If there was a stuck merge, abort it
   try {
-    execSync('git merge --abort', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit('git merge --abort', { slice_id: '0', op: 'clearStaleLocks_mergeAbort', execOpts: { stdio: 'pipe' } });
     log('info', 'startup', { msg: 'Aborted in-progress merge left from prior run' });
   } catch (_) {
     // No merge in progress — expected
@@ -1169,8 +1169,8 @@ function ensureMainIsFresh(id) {
     return;
   }
 
-  const local  = execSync('git rev-parse main',        { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
-  const remote = execSync('git rev-parse origin/main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  const local  = gitFinalizer.runGit('git rev-parse main',        { slice_id: id, op: 'ensureMainIsFresh_localSha', encoding: 'utf-8' }).trim();
+  const remote = gitFinalizer.runGit('git rev-parse origin/main', { slice_id: id, op: 'ensureMainIsFresh_remoteSha', encoding: 'utf-8' }).trim();
 
   if (local === remote) {
     log('info', 'git_safety', { id, msg: 'main is up to date with origin' });
@@ -1178,7 +1178,7 @@ function ensureMainIsFresh(id) {
   }
 
   // Check if local has commits not on origin (diverged)
-  const ahead = execSync('git log origin/main..main --oneline', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+  const ahead = gitFinalizer.runGit('git log origin/main..main --oneline', { slice_id: id, op: 'ensureMainIsFresh_ahead', encoding: 'utf-8' }).trim();
 
   if (ahead) {
     // Diverged — discard local-only commits and hard-reset to origin
@@ -1189,13 +1189,13 @@ function ensureMainIsFresh(id) {
       discarded: aheadList,
     });
     gitFinalizer.runGit('git reset --hard origin/main', { slice_id: id, op: 'ensureMainIsFresh_reset', execOpts: { stdio: 'pipe' } });
-    const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyReset', encoding: 'utf-8' }).trim();
     log('info', 'git_safety', { id, msg: `Hard-reset complete: main now at ${after.slice(0, 8)}` });
     selfRestart(`main was diverged and has been hard-reset to origin/main at ${after.slice(0, 8)}`);
   } else {
     // Local is behind origin — safe fast-forward
     gitFinalizer.runGit('git merge --ff-only origin/main', { slice_id: id, op: 'ensureMainIsFresh_ff', execOpts: { stdio: 'pipe' } });
-    const after = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyFF', encoding: 'utf-8' }).trim();
     log('info', 'git_safety', { id, msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}` });
   }
 }
@@ -1214,9 +1214,9 @@ function buildScopeDiff(id, branchName, sliceContent) {
   const lines = [];
   try {
     // File-level diff stat (which files changed and by how much)
-    const stat = execSync(`git diff --stat main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const stat = gitFinalizer.runGit(`git diff --stat main...${branchName}`, { slice_id: id, op: 'buildScopeDiff_stat', encoding: 'utf-8' }).trim();
     // File list with status (A=added, M=modified, D=deleted)
-    const nameStatus = execSync(`git diff --name-status main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const nameStatus = gitFinalizer.runGit(`git diff --name-status main...${branchName}`, { slice_id: id, op: 'buildScopeDiff_nameStatus', encoding: 'utf-8' }).trim();
 
     lines.push('## SCOPE REVIEW — files changed on this branch');
     lines.push('');
@@ -1303,14 +1303,14 @@ function createWorktree(id, branchName) {
   // Check if branch already exists
   let branchExists = false;
   try {
-    execSync(`git rev-parse --verify refs/heads/${branchName}`, { cwd: PROJECT_DIR, stdio: 'pipe' });
+    gitFinalizer.runGit(`git rev-parse --verify refs/heads/${branchName}`, { slice_id: id, op: 'createWorktree_branchCheck', execOpts: { stdio: 'pipe' } });
     branchExists = true;
   } catch (_) {}
 
   if (branchExists) {
     // Branch exists — check if it's already in another worktree and prune if needed
     try {
-      const wtList = execSync('git worktree list --porcelain', { cwd: PROJECT_DIR, encoding: 'utf-8' });
+      const wtList = gitFinalizer.runGit('git worktree list --porcelain', { slice_id: id, op: 'createWorktree_listCheck', encoding: 'utf-8' });
       const blocks = wtList.split('\n\n').filter(Boolean);
       for (const block of blocks) {
         const lines = block.split('\n');
@@ -1419,7 +1419,7 @@ function classifyNoReportExit(id, worktreePath, branchName) {
 
   // Check for commits beyond main
   try {
-    const logOutput = execSync(`git log main..${branchName} --oneline`, { cwd: worktreePath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    const logOutput = gitFinalizer.runGit(`git log main..${branchName} --oneline`, { slice_id: id, op: 'classifyNoReport_log', cwd: worktreePath, encoding: 'utf-8', execOpts: { stdio: ['pipe', 'pipe', 'pipe'] } }).trim();
     if (logOutput) {
       result.hasCommits = true;
       result.commits = logOutput.split('\n');
@@ -1428,7 +1428,7 @@ function classifyNoReportExit(id, worktreePath, branchName) {
 
   // Check for uncommitted changes
   try {
-    result.porcelain = execSync('git status --porcelain', { cwd: worktreePath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+    result.porcelain = gitFinalizer.runGit('git status --porcelain', { slice_id: id, op: 'classifyNoReport_status', cwd: worktreePath, encoding: 'utf-8', execOpts: { stdio: ['pipe', 'pipe', 'pipe'] } }).trim();
     if (result.porcelain) {
       result.hasDiff = true;
     }
@@ -1436,7 +1436,7 @@ function classifyNoReportExit(id, worktreePath, branchName) {
 
   // Get diff summary (truncated)
   try {
-    const diff = execSync('git diff HEAD', { cwd: worktreePath, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+    const diff = gitFinalizer.runGit('git diff HEAD', { slice_id: id, op: 'classifyNoReport_diff', cwd: worktreePath, encoding: 'utf-8', execOpts: { stdio: ['pipe', 'pipe', 'pipe'] } });
     const lines = diff.split('\n');
     result.diffSummary = lines.slice(0, 200).join('\n') + (lines.length > 200 ? '\n…(truncated)' : '');
   } catch (_) {}
@@ -1585,7 +1585,7 @@ function cleanupDeadWorktrees() {
         const wtDir = path.join(WORKTREE_BASE, dir);
         // Check if this worktree is still registered with git
         try {
-          const wtList = execSync('git worktree list --porcelain', { cwd: PROJECT_DIR, encoding: 'utf-8' });
+          const wtList = gitFinalizer.runGit('git worktree list --porcelain', { slice_id: '0', op: 'cleanupDead_wtList', encoding: 'utf-8' });
           if (!wtList.includes(wtDir)) {
             fs.rmSync(wtDir, { recursive: true, force: true });
             log('info', 'worktree', { msg: `Startup: cleaned orphaned worktree dir ${dir}` });
@@ -1607,7 +1607,7 @@ function cleanupDeadWorktrees() {
  */
 function verifyWorkingTreeMatchesMain(id, context) {
   try {
-    const dirty = execSync('git diff --name-only HEAD', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const dirty = gitFinalizer.runGit('git diff --name-only HEAD', { slice_id: id, op: 'verifyTree_diff', encoding: 'utf-8' }).trim();
     if (!dirty) return; // Clean — all good.
 
     const files = dirty.split('\n').filter(Boolean);
@@ -1620,7 +1620,7 @@ function verifyWorkingTreeMatchesMain(id, context) {
     for (const file of files) {
       const diskPath = path.join(PROJECT_DIR, file);
       try {
-        const content = execSync(`git show HEAD:${file}`, { cwd: PROJECT_DIR, encoding: 'buffer' });
+        const content = gitFinalizer.runGit(`git show HEAD:${file}`, { slice_id: id, op: 'verifyTree_show', execOpts: { encoding: 'buffer' } });
         fs.writeFileSync(diskPath, content);
       } catch (_) {
         // File was deleted in git — rename to trash
@@ -2669,16 +2669,16 @@ function mergeBranch(id, branchName, title) {
     // ── Step 1: Merge main into slice branch in the worktree ───────────
     // This runs on local FS (/tmp), not FUSE. Resolves any main changes
     // since the branch was created.
-    const oldMain = execSync('git rev-parse main', { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const oldMain = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'mergeBranch_oldMain', encoding: 'utf-8' }).trim();
     gitFinalizer.runGit(`git merge main -m "${commitMsg.replace(/"/g, '\\"')}"`, { slice_id: id, op: 'mergeBranch_merge', cwd: wtPath, execOpts: { stdio: 'pipe' } });
 
     // ── Step 2: Fast-forward main to the merge result ──────────────────
-    const newSha = execSync(`git rev-parse ${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const newSha = gitFinalizer.runGit(`git rev-parse ${branchName}`, { slice_id: id, op: 'mergeBranch_newSha', encoding: 'utf-8' }).trim();
     gitFinalizer.runGit(`git update-ref refs/heads/main ${newSha}`, { slice_id: id, op: 'mergeBranch_updateRef', execOpts: { stdio: 'pipe' } });
 
     // ── Step 3: Sync changed files from worktree to PROJECT_DIR ────────
     // FUSE handles writes fine (writeFileSync truncates in-place).
-    const diffRaw = execSync(`git diff --name-only ${oldMain} main`, { cwd: PROJECT_DIR, encoding: 'utf-8' }).trim();
+    const diffRaw = gitFinalizer.runGit(`git diff --name-only ${oldMain} main`, { slice_id: id, op: 'mergeBranch_diffFiles', encoding: 'utf-8' }).trim();
     if (diffRaw) {
       for (const file of diffRaw.split('\n').filter(Boolean)) {
         const srcPath = path.join(wtPath, file);
@@ -2715,7 +2715,7 @@ function mergeBranch(id, branchName, title) {
     return { success: true, sha: newSha, error: null };
   } catch (err) {
     // Abort any in-progress merge in the worktree to leave git in a clean state.
-    try { execSync('git merge --abort', { cwd: wtPath, stdio: 'pipe' }); } catch (_) {}
+    try { gitFinalizer.runGit('git merge --abort', { slice_id: id, op: 'mergeBranch_abort', cwd: wtPath, execOpts: { stdio: 'pipe' } }); } catch (_) {}
     return { success: false, sha: null, error: err.stderr ? err.stderr.toString().trim() : err.message };
   } finally {
     // Always re-lock and clear the env var, even on failure.
@@ -3071,7 +3071,7 @@ function invokeNog(id) {
   let gitDiff = '(no diff available)';
   if (branchName) {
     try {
-      gitDiff = execSync(`git diff main...${branchName}`, { cwd: PROJECT_DIR, encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 });
+      gitDiff = gitFinalizer.runGit(`git diff main...${branchName}`, { slice_id: id, op: 'nog_gitDiff', encoding: 'utf-8', execOpts: { maxBuffer: 5 * 1024 * 1024 } });
     } catch (err) {
       log('warn', 'nog', { id, msg: 'Failed to get git diff for Nog', error: err.message });
     }
@@ -4007,8 +4007,16 @@ function poll() {
   if (processing) return;
 
   // Cycle-start sweep: prune orphan locks and worktree dirs before dispatch.
-  try { gitFinalizer.sweepStaleResources(); } catch (err) {
-    log('warn', 'sweep', { msg: 'sweepStaleResources threw', error: err.message });
+  // Returns false when STALE_LOCK_DETECTED — skip dispatch to avoid hitting the same lock.
+  try {
+    const shouldDispatch = gitFinalizer.sweepStaleResources();
+    if (shouldDispatch === false) {
+      log('info', 'sweep', { msg: 'sweepStaleResources signalled skip-dispatch (STALE_LOCK_DETECTED)' });
+      return;
+    }
+  } catch (err) {
+    log('warn', 'sweep', { msg: 'sweepStaleResources threw — skipping dispatch this tick', error: err.message });
+    return;
   }
 
   // Rate limit gate: pause dispatch until the API limit resets.
@@ -4379,8 +4387,8 @@ function crashRecovery() {
     let alreadyMerged = false;
     try {
       // Fast path: check if ref still exists and is in main's ancestry
-      execSync(`git rev-parse --verify "${branchName}"`, { cwd: PROJECT_DIR, encoding: 'utf-8' });
-      const merged = execSync('git branch --merged main', { cwd: PROJECT_DIR, encoding: 'utf-8' });
+      gitFinalizer.runGit(`git rev-parse --verify "${branchName}"`, { slice_id: id, op: 'startupRecovery_verifyRef', encoding: 'utf-8' });
+      const merged = gitFinalizer.runGit('git branch --merged main', { slice_id: id, op: 'startupRecovery_mergedCheck', encoding: 'utf-8' });
       alreadyMerged = merged.split('\n').some(line => line.trim() === branchName);
     } catch (_) {
       // Branch ref is gone (deleted after worktree cleanup) — check register
