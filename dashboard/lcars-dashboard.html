@@ -3718,12 +3718,6 @@
     return [...stagedRows, ...needsAmendRows, ...apendmentRows2, ...queuedRows, ...inProgressRows, ...doneRows, ...errorRows];
   }
 
-  function buildStagedRows() {
-    return cachedStagedItems
-      .filter(s => s.status !== 'NEEDS_APENDMENT')
-      .map(s => ({ id: s.id, title: s.title, goal: s.goal, sprint: s.sprint, references: s.references, rowState: 'STAGED', isApendment: false }));
-  }
-
   function renderQueueList() {
     const container = document.getElementById('queue-list');
     const rows = buildQueueRows();
