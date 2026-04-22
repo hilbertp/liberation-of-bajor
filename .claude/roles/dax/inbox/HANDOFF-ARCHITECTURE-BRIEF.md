@@ -23,7 +23,7 @@ The question for you: what's the right architecture for the dashboard and the br
 
 | Component | Technology | How it runs | Convenient? |
 |---|---|---|---|
-| **Watcher** | Node.js process (`watcher.js`, 945 lines) | `node bridge/watcher.js` — manually started, or launchd plist | Semi. Needs manual restart after code changes. Crash recovery exists but is file-based. |
+| **Watcher** | Node.js process (`orchestrator.js`, 945 lines) | `node bridge/orchestrator.js` — manually started, or launchd plist | Semi. Needs manual restart after code changes. Crash recovery exists but is file-based. |
 | **Dashboard server** | Node.js HTTP (`server.js`, 137 lines) | `node dashboard/server.js` on port 4747 | Bare minimum. No hot reload, no build step, manual start. |
 | **Dashboard UI** | Single HTML file (39.6KB, inline CSS+JS) | Served by dashboard server | Works for v0.2. Will not scale to the redesign complexity. |
 | **Queue** | Flat files in `bridge/queue/` | Markdown files with YAML frontmatter, renamed atomically | Reliable. State transitions via filesystem rename. |
@@ -136,7 +136,7 @@ Philipp wants every role to report token burn and human-hours estimates. Archite
 
 ### 5. Unified startup
 
-Right now: `node bridge/watcher.js` + `node dashboard/server.js` + Cowork cron task. Should there be a single entry point?
+Right now: `node bridge/orchestrator.js` + `node dashboard/server.js` + Cowork cron task. Should there be a single entry point?
 
 ```
 node start.js
@@ -167,7 +167,7 @@ Philipp will review your recommendation. Once architecture is decided, Kira comm
 | File | What it contains |
 |---|---|
 | `dashboard/DASHBOARD-REDESIGN-SPEC.md` | Full UX/UI spec with panel layouts, data contracts, and phasing |
-| `bridge/watcher.js` | Current watcher implementation (945 lines) |
+| `bridge/orchestrator.js` | Current watcher implementation (945 lines) |
 | `dashboard/server.js` | Current dashboard server (137 lines) |
 | `bridge/register.jsonl` | Current event log (2 entries) |
 | `bridge/heartbeat.json` | Current heartbeat snapshot |

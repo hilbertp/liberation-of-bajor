@@ -67,7 +67,7 @@ The watcher appends a JSON line to `bridge/kira-events.jsonl` when an escalation
 }
 ```
 
-**Trigger points in `watcher.js`:**
+**Trigger points in `orchestrator.js`:**
 
 | Where | Event |
 |---|---|
@@ -174,8 +174,8 @@ This is the mechanism that closes the context gap. It's human-triggered (Philipp
 | Item | Path |
 |---|---|
 | Sprint 3 scope | `docs/SPRINT3-SCOPE.md` |
-| Watcher `handleStuck()` | `bridge/watcher.js` ~line 1277 |
-| Existing evaluator | `bridge/watcher.js` lines 933–1297 |
+| Watcher `handleStuck()` | `bridge/orchestrator.js` ~line 1277 |
+| Existing evaluator | `bridge/orchestrator.js` lines 933–1297 |
 | Kira operational anchor | `KIRA.md` |
 | Kira role doc | `.claude/roles/kira/ROLE.md` |
 | Kira learning | `.claude/roles/kira/LEARNING.md` |

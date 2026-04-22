@@ -10,7 +10,7 @@
 
 ## Decision
 
-The evaluator runs **inside `watcher.js`** as a second pass in the existing poll loop, invoked via the same `claude -p` pattern already used for O'Brien commissions. No new process, no Cowork involvement.
+The evaluator runs **inside `orchestrator.js`** as a second pass in the existing poll loop, invoked via the same `claude -p` pattern already used for O'Brien commissions. No new process, no Cowork involvement.
 
 This replaces `kira-commission-watch` entirely. The full cycle — commission, execute, evaluate, amend-or-accept, merge — runs autonomously in the relay.
 
@@ -74,7 +74,7 @@ PENDING always goes first. Evaluation only runs when the queue has no pending wo
 
 ### 2. Where the evaluator gets its inputs
 
-**The ACs (success criteria):** Read from `{id}-COMMISSION.md` in the queue directory. The watcher already creates this file (line 540 of current `watcher.js`) — it renames IN_PROGRESS to COMMISSION after O'Brien finishes. The file contains the exact commission content Kira wrote, including all acceptance criteria. No need to parse the register.
+**The ACs (success criteria):** Read from `{id}-COMMISSION.md` in the queue directory. The watcher already creates this file (line 540 of current `orchestrator.js`) — it renames IN_PROGRESS to COMMISSION after O'Brien finishes. The file contains the exact commission content Kira wrote, including all acceptance criteria. No need to parse the register.
 
 **O'Brien's report:** Read from `{id}-EVALUATING.md` (the renamed DONE file). This is O'Brien's output.
 
@@ -172,7 +172,7 @@ Same pattern as IN_PROGRESS → PENDING recovery.
 
 ### 9. Commission ID for amendments and merges
 
-Use the existing `nextCommissionId()` function (line 870 of watcher.js). It scans the queue directory and returns the next zero-padded ID. Amendment and merge PENDING files get fresh IDs just like any other commission.
+Use the existing `nextCommissionId()` function (line 870 of orchestrator.js). It scans the queue directory and returns the next zero-padded ID. Amendment and merge PENDING files get fresh IDs just like any other commission.
 
 ### 10. Register event timeline (example)
 

@@ -15,7 +15,7 @@ Kira will be commissioning you to implement per-slice tracking. This file gives 
 
 ## What you're being asked to build
 
-Eight changes across `bridge/watcher.js`, `bridge/bridge.config.json`, `bridge/slicelog.js` (new), and `README.md`.
+Eight changes across `bridge/orchestrator.js`, `bridge/bridge.config.json`, `bridge/slicelog.js` (new), and `README.md`.
 
 ---
 

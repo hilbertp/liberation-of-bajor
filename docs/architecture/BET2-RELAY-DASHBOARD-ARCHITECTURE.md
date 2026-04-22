@@ -68,7 +68,7 @@ The current file-queue bridge works. Slices 1-10 were delivered through it. The 
 
 ### 2.1 Why one process, not two
 
-The current system runs two separate Node processes: `watcher.js` and `dashboard/server.js`. This is operationally awkward — two things to start, two things that can crash independently, no shared state without reading files on every request.
+The current system runs two separate Node processes: `orchestrator.js` and `dashboard/server.js`. This is operationally awkward — two things to start, two things that can crash independently, no shared state without reading files on every request.
 
 **Decision:** Merge into a single Node.js process.
 
@@ -292,7 +292,7 @@ repo/
 **Why a new `relay/` directory instead of modifying `bridge/`:**
 
 - `bridge/` is the runtime directory — queue files, logs, heartbeat. Adding Docker infrastructure there muddies the boundary between "state the system produces" and "code that runs the system."
-- The existing `bridge/watcher.js` continues to work standalone for Philipp's current workflow. The relay is an alternative entry point, not a replacement. Philipp can still run `node bridge/watcher.js` manually if he prefers.
+- The existing `bridge/orchestrator.js` continues to work standalone for Philipp's current workflow. The relay is an alternative entry point, not a replacement. Philipp can still run `node bridge/orchestrator.js` manually if he prefers.
 - `docker-compose.yml` lives at the repo root because that's where strangers expect it. `git clone && docker compose up` works from the root.
 
 ### 5.2 Lovable / Leeta consideration
@@ -309,7 +309,7 @@ This decision is deferred until Bet 3 scoping. It does not affect Bet 2.
 
 ### 6.1 Coexistence, not migration
 
-The relay does not replace the current setup — it runs alongside it. Philipp's existing workflow (manual `node bridge/watcher.js` + `node dashboard/server.js`) continues to work unchanged.
+The relay does not replace the current setup — it runs alongside it. Philipp's existing workflow (manual `node bridge/orchestrator.js` + `node dashboard/server.js`) continues to work unchanged.
 
 **Phase 1: Build the relay.**
 - Create `relay/server.js` (unified watcher + HTTP server)
@@ -521,13 +521,13 @@ No spikes. All identified risks (Docker auth, evaluation quality, apendment loop
 
 | Slice | Title | What it delivers |
 |---|---|---|
-| **B0** | Evaluator in `watcher.js` | Second poll pass for DONE files; EVALUATING rename; `claude -p` evaluation prompt; ACCEPTED/REVIEWED/STUCK outcomes; apendment commission writer; cycle counter; crash recovery extension; CORS + `0.0.0.0` in `server.js`. **Urgent — unblocks Kira.** |
+| **B0** | Evaluator in `orchestrator.js` | Second poll pass for DONE files; EVALUATING rename; `claude -p` evaluation prompt; ACCEPTED/REVIEWED/STUCK outcomes; apendment commission writer; cycle counter; crash recovery extension; CORS + `0.0.0.0` in `server.js`. **Urgent — unblocks Kira.** |
 | **B1** | Unified relay server | `relay/server.js` merging watcher + HTTP + API; Dockerfile + docker-compose.yml. |
 | **B2** | Contributor dashboard | `relay/dashboard.html` with 5 elements + demo commission, polling `/api/bridge`. New states (ACCEPTED, REVIEWED, STUCK) rendered. |
 | **B3** | Integration + README | Full `docker compose up` flow tested; repo README rewritten for strangers |
 | **B4** | Kira status reading | Kira in Cowork can read register/status on demand — "what happened to slice X?" works |
 
-B0 ships into the existing `watcher.js` (no Docker required). All other slices proceed in order after B0.
+B0 ships into the existing `orchestrator.js` (no Docker required). All other slices proceed in order after B0.
 
 Total estimated effort: 5-7 O'Brien commissions. Start with B0.
 
@@ -546,7 +546,7 @@ Full design in `roles/kira/RESPONSE-EVALUATOR-ARCHITECTURE-FROM-DAX.md`. Summary
 6. If cycle ≥ 5: rename to STUCK → surfaces to Philipp
 
 **Key design points:**
-- Runs inside `watcher.js` — second pass in poll loop after PENDING check, same `claude -p` pattern
+- Runs inside `orchestrator.js` — second pass in poll loop after PENDING check, same `claude -p` pattern
 - Uses `processing` flag — no concurrent `claude -p` calls
 - PENDING commissions always take priority over DONE evaluations
 - Merge commissions (`type: merge`) auto-accept — no evaluation needed

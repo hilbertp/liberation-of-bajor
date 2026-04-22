@@ -128,5 +128,5 @@ Dax's architecture document should show how these requirements are satisfied, no
 | `PROJECT-VISION.md` | North star — agents keep their powers, files are source of truth |
 | `repo/KIRA.md` | Current Kira workflow — the thing the relay must not break |
 | `repo/.claude/CLAUDE.md` | O'Brien's anchor — the thing the relay must not break |
-| `repo/bridge/watcher.js` | What the relay is replacing or wrapping |
+| `repo/bridge/orchestrator.js` | What the relay is replacing or wrapping |
 | `repo/bridge/queue/` | The file-based state machine in action |

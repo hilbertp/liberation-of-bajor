@@ -163,7 +163,7 @@ The apendment cap at 5 cycles is the automated version. If a brief can't be comp
 
 **Leeta's skills:** Global skills.
 
-**The watcher — automation engine (`bridge/watcher.js`):**
+**The watcher — automation engine (`bridge/orchestrator.js`):**
 
 Queue state machine:
 ```
@@ -342,7 +342,7 @@ The autonomous pipeline: staging gate → brief queue → watcher → O'Brien in
 ```
 repo/
 ├── bridge/
-│   ├── watcher.js              ← Automation engine: poll, invoke, evaluate, merge
+│   ├── orchestrator.js          ← Automation engine: poll, invoke, evaluate, merge
 │   ├── slicelog.js             ← Timesheet append/update functions
 │   ├── next-id.js              ← Sequential brief ID assignment
 │   ├── usage-snapshot.js       ← Cowork session cost capture

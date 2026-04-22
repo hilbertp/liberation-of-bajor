@@ -6,6 +6,7 @@ const { execFile, execSync } = require('child_process');
 const { appendTimesheet, updateTimesheet, rebuildMerged } = require('./slicelog');
 const { appendKiraEvent } = require('./kira-events');
 const { buildNogPrompt } = require('./nog-prompt');
+const { translateEvent, translateVerdict, resetDedupeState } = require('./lifecycle-translate');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -31,7 +32,7 @@ function loadConfig() {
     fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   } catch (_) {
     // Config file absent or unreadable — proceed with defaults.
-    // This is intentional: the watcher must work with zero configuration.
+    // This is intentional: the orchestrator must work with zero configuration.
   }
   return {
     config: Object.assign({}, DEFAULTS, fileConfig),
@@ -493,7 +494,7 @@ function log(level, event, fields) {
   try {
     fs.appendFileSync(LOG_FILE, line + '\n');
   } catch (err) {
-    // Log file write failure must not crash the watcher.
+    // Log file write failure must not crash the orchestrator.
     process.stdout.write('[log-write-error] ' + err.message + '\n');
   }
 }
@@ -522,18 +523,31 @@ function truncStderr(s) {
  * order: dev → review → accept → merge. No HTTP handler, SSE push, CLI helper, or
  * background task may append to register.jsonl directly. If you are about to add a
  * second writer, stop — use registerEvent or emit a control-file action for the
- * watcher to dispatch synchronously. Slices 168 + 169 removed the last side channel
+ * orchestrator to dispatch synchronously. Slices 168 + 169 removed the last side channel
  * (callReviewAPI); keep it that way.
  */
+// Write-time dedupe for MERGED events on (slice_id, sha).
+const _writtenMerged = new Set();
+
 function registerEvent(id, event, extra) {
+  // Dedupe MERGED at write time on (slice_id, sha)
+  if (event === 'MERGED' && extra && extra.sha) {
+    const key = `${extra.slice_id || id}:${extra.sha}`;
+    if (_writtenMerged.has(key)) {
+      log('info', 'register_dedupe', { id, msg: `Duplicate MERGED suppressed for ${key}` });
+      return;
+    }
+    _writtenMerged.add(key);
+  }
+
   const entry = Object.assign(
-    { ts: new Date().toISOString(), id: String(id), event },
+    { ts: new Date().toISOString(), slice_id: String(id), event },
     extra || {}
   );
   try {
     fs.appendFileSync(REGISTER_FILE, JSON.stringify(entry) + '\n');
   } catch (err) {
-    // Register write failure must not crash the watcher.
+    // Register write failure must not crash the orchestrator.
     log('warn', 'register_error', { id, msg: 'Failed to write register entry', error: err.message });
   }
 }
@@ -547,7 +561,7 @@ function registerEvent(id, event, extra) {
  */
 function registerCommissioned(id, extra) {
   const entry = Object.assign(
-    { ts: new Date().toISOString(), id: String(id), event: 'COMMISSIONED' },
+    { ts: new Date().toISOString(), slice_id: String(id), event: 'COMMISSIONED' },
     extra || {}
   );
   const line = JSON.stringify(entry) + '\n';
@@ -916,7 +930,7 @@ function fuseSafeCheckoutMain(id) {
  *
  * FUSE-safe checkout to an EXISTING feature branch.
  * Same strategy as fuseSafeCheckoutMain but targets a named branch.
- * Used for apendment flows where the watcher needs to resume work on
+ * Used for apendment flows where the orchestrator needs to resume work on
  * a branch after a restart (when HEAD may have returned to main).
  *
  * Steps:
@@ -1122,11 +1136,11 @@ function clearStaleGitLocks() {
 /**
  * selfRestart(reason)
  *
- * Spawns a fresh copy of the watcher process and exits this one.
+ * Spawns a fresh copy of the orchestrator process and exits this one.
  * Used when a hard-reset or lock-clearing operation needs a clean process state.
  */
 function selfRestart(reason) {
-  log('warn', 'self_restart', { msg: `Restarting watcher: ${reason}` });
+  log('warn', 'self_restart', { msg: `Restarting orchestrator: ${reason}` });
   const { spawn } = require('child_process');
   const child = spawn(process.execPath, process.argv.slice(1), {
     detached: true,
@@ -1539,7 +1553,7 @@ const activeChildren = new Map(); // Map<sliceId: string, { child: ChildProcess,
  */
 function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effectiveInactivityMs, title, goal) {
   // ── WATCHER-OWNED BRANCH LIFECYCLE ─────────────────────────────────────
-  // The watcher OWNS all branching. Rom never creates, checks out, or manages
+  // The orchestrator OWNS all branching. Rom never creates, checks out, or manages
   // branches. This is the rigid pipeline gate that prevents prompt-quality
   // failures from corrupting git state.
   //
@@ -1772,11 +1786,11 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             const doneTokensOut = parseInt(doneMeta.tokens_out, 10);
             const timesheetCost = computeCost(doneTokensIn, doneTokensOut);
 
-            // timesheet write point 1 — append watcher row at DONE
+            // timesheet write point 1 — append orchestrator row at DONE
             appendTimesheet({
               ts: new Date(pickupTime).toISOString(),
               role: 'rom',
-              source: 'watcher',
+              source: 'orchestrator',
               commission_id: String(id),
               title: (sliceMeta.title || title || '').replace(/^["']|["']$/g, ''),
               phase: null,
@@ -1832,7 +1846,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             branch: sliceBranch || null,
             details: `Slice ${id} errored: no_report`,
           });
-          // timesheet write point 2 — update watcher row at terminal state
+          // timesheet write point 2 — update orchestrator row at terminal state
           updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
           closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, 'No report written');
           recordSessionResult(false, tokensIn, tokensOut, costUsd);
@@ -2007,7 +2021,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
           branch: sliceBranch || null,
           details: `Slice ${id} errored: ${reason}`,
         });
-        // timesheet write point 2 — update watcher row at terminal state
+        // timesheet write point 2 — update orchestrator row at terminal state
         updateTimesheet(id, { result: 'ERROR', cycle: null, ts_result: new Date().toISOString() });
         closeSliceBlock(false, durationMs, tokensIn, tokensOut, costUsd, reasonDisplay);
         recordSessionResult(false, tokensIn, tokensOut, costUsd);
@@ -2097,10 +2111,12 @@ function countReviewedCycles(rootId) {
   try {
     const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
     let count = 0;
+    resetDedupeState();
     for (const line of lines) {
       try {
-        const entry = JSON.parse(line);
-        if (entry.event === 'REVIEWED' && (entry.id === String(rootId) || entry.root_commission_id === String(rootId))) {
+        const raw = JSON.parse(line);
+        const entry = translateEvent(raw);
+        if (entry && entry.event === 'NOG_DECISION' && (entry.id === String(rootId) || entry.root_commission_id === String(rootId))) {
           count++;
         }
       } catch (_) {}
@@ -2114,16 +2130,18 @@ function countReviewedCycles(rootId) {
 /**
  * hasReviewEvent(id)
  *
- * Returns true if register.jsonl contains a REVIEWED, ACCEPTED, or STUCK event
+ * Returns true if register.jsonl contains a NOG_DECISION, MERGED, or STUCK event
  * for this slice ID — meaning it has already been evaluated.
  */
 function hasReviewEvent(id) {
   try {
     const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    resetDedupeState();
     for (const line of lines) {
       try {
-        const entry = JSON.parse(line);
-        if (entry.id === String(id) && ['REVIEWED', 'ACCEPTED', 'STUCK'].includes(entry.event)) {
+        const raw = JSON.parse(line);
+        const entry = translateEvent(raw);
+        if (entry && entry.id === String(id) && ['NOG_DECISION', 'MERGED', 'STUCK'].includes(entry.event)) {
           return true;
         }
       } catch (_) {}
@@ -2527,12 +2545,11 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
     if (commMeta) title = commMeta.title || null;
   } catch (_) {}
 
-  // Canonical order: REVIEW_RECEIVED (verdict on file) → ACCEPTED (decision) → rename → merge → MERGED
-  registerEvent(id, 'REVIEW_RECEIVED', { verdict: 'ACCEPTED', reason, cycle });
-  registerEvent(id, 'ACCEPTED', { cycle });
+  // Canonical: NOG_DECISION (verdict) → rename → merge → MERGED
+  registerEvent(id, 'NOG_DECISION', { verdict: 'ACCEPTED', reason, cycle, round: cycle });
   log('info', 'evaluator', { id, verdict: 'ACCEPTED', cycle, durationMs });
 
-  // timesheet write point 2 — update watcher row at terminal state
+  // timesheet write point 2 — update orchestrator row at terminal state
   updateTimesheet(id, { result: 'ACCEPTED', cycle, ts_result: new Date().toISOString() });
 
   const acceptedPath = path.join(QUEUE_DIR, `${id}-ACCEPTED.md`);
@@ -2580,10 +2597,9 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
  * The slice keeps its original ID — no new slice is created.
  */
 function handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs) {
-  // Canonical order: REVIEW_RECEIVED (verdict on file) → REVIEWED (decision)
-  registerEvent(id, 'REVIEW_RECEIVED', { verdict: 'APENDMENT_NEEDED', reason, cycle: cycle + 1 });
-  registerEvent(id, 'REVIEWED', { verdict: 'APENDMENT_NEEDED', failed_criteria: failedCriteria, cycle: cycle + 1, round: cycle + 1, apendment_cycle: cycle + 1 });
-  log('info', 'evaluator', { id, verdict: 'APENDMENT_NEEDED', cycle: cycle + 1, rootId, durationMs });
+  // Canonical: NOG_DECISION (verdict: REJECTED)
+  registerEvent(id, 'NOG_DECISION', { verdict: 'REJECTED', reason, failed_criteria: failedCriteria, cycle: cycle + 1, round: cycle + 1, apendment_cycle: cycle + 1 });
+  log('info', 'evaluator', { id, verdict: 'REJECTED', cycle: cycle + 1, rootId, durationMs });
 
   // Read the PARKED file for in-place rewrite.
   const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
@@ -2614,7 +2630,7 @@ function handleApendment(id, rootId, reason, failedCriteria, apendmentInstructio
     '',
     `This is an apendment to slice ${rootId} (cycle ${cycle + 1} of 5).`,
     '',
-    '**IMPORTANT: The watcher handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
+    '**IMPORTANT: The orchestrator handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
     '',
     '### Failed criteria',
     '',
@@ -2655,12 +2671,11 @@ function handleApendment(id, rootId, reason, failedCriteria, apendmentInstructio
  * STUCK verdict: register event, rename EVALUATING → STUCK, no new QUEUED.
  */
 function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) {
-  // Canonical order: REVIEW_RECEIVED (verdict on file) → STUCK (decision)
-  registerEvent(id, 'REVIEW_RECEIVED', { verdict: 'STUCK', reason, cycle });
-  registerEvent(id, 'STUCK', { cycle, branch: branchName });
+  // Canonical: STUCK (terminal state)
+  registerEvent(id, 'STUCK', { reason, cycle, branch: branchName });
   log('warn', 'evaluator', { id, verdict: 'STUCK', cycle, durationMs });
 
-  // timesheet write point 2 — update watcher row at terminal state
+  // timesheet write point 2 — update orchestrator row at terminal state
   updateTimesheet(id, { result: 'STUCK', cycle, ts_result: new Date().toISOString() });
 
   const stuckPath = path.join(QUEUE_DIR, `${id}-STUCK.md`);
@@ -2957,7 +2972,7 @@ function invokeNog(id) {
           const nogContent = fs.readFileSync(nogVerdictPath, 'utf-8');
           const nogMeta = parseFrontmatter(nogContent);
           if (nogMeta) {
-            verdict = nogMeta.verdict ? nogMeta.verdict.toUpperCase() : null;
+            verdict = nogMeta.verdict ? translateVerdict(nogMeta.verdict.toUpperCase()) : null;
             summary = nogMeta.summary || '';
           }
         } catch (readErr) {
@@ -2984,9 +2999,9 @@ function invokeNog(id) {
         updatedSliceContent = fs.readFileSync(resolvedParkedPath, 'utf-8');
       } catch (_) {}
 
-      if (!verdict || !['PASS', 'RETURN', 'ESCALATE'].includes(verdict)) {
-        // Missing or unparseable verdict — treat as RETURN.
-        log('warn', 'nog', { id, msg: 'Nog verdict unreadable — treating as RETURN', verdict, durationMs });
+      if (!verdict || !['ACCEPTED', 'REJECTED', 'ESCALATE', 'OVERSIZED'].includes(verdict)) {
+        // Missing or unparseable verdict — treat as REJECTED.
+        log('warn', 'nog', { id, msg: 'Nog verdict unreadable — treating as REJECTED', verdict, durationMs });
 
         // Append round entry to PARKED file.
         const romTelemetryUnread = extractRomTelemetry(doneReportContents);
@@ -2998,11 +3013,11 @@ function invokeNog(id) {
           tokensIn: romTelemetryUnread.tokensIn,
           tokensOut: romTelemetryUnread.tokensOut,
           costUsd: romTelemetryUnread.costUsd,
-          nog_verdict: 'NOG_RETURN',
+          nog_verdict: 'NOG_DECISION_REJECTED',
           nog_reason: 'verdict_unreadable',
         });
 
-        registerEvent(id, 'NOG_RETURN', { round, reason: 'verdict_unreadable', apendment_cycle: round });
+        registerEvent(id, 'NOG_DECISION', { round, verdict: 'REJECTED', reason: 'verdict_unreadable', apendment_cycle: round });
         appendKiraEvent({
           event: 'NOG_ESCALATION',
           slice_id: id,
@@ -3029,7 +3044,7 @@ function invokeNog(id) {
         return;
       }
 
-      if (verdict === 'ESCALATE') {
+      if (verdict === 'ESCALATE' || verdict === 'OVERSIZED') {
         // Nog determined ACs cannot be satisfied as written — escalate to O'Brien.
         log('warn', 'nog', { id, verdict: 'ESCALATE', round, durationMs, summary });
 
@@ -3092,9 +3107,9 @@ function invokeNog(id) {
         return;
       }
 
-      if (verdict === 'PASS') {
-        log('info', 'nog', { id, verdict: 'PASS', round, durationMs, summary });
-        registerEvent(id, 'NOG_PASS', { round });
+      if (verdict === 'ACCEPTED') {
+        log('info', 'nog', { id, verdict: 'ACCEPTED', round, durationMs, summary });
+        registerEvent(id, 'NOG_DECISION', { round, verdict: 'ACCEPTED', reason: summary || '' });
 
         // Append round entry to PARKED file.
         const romTelemetry = extractRomTelemetry(doneReportContents);
@@ -3106,7 +3121,7 @@ function invokeNog(id) {
           tokensIn: romTelemetry.tokensIn,
           tokensOut: romTelemetry.tokensOut,
           costUsd: romTelemetry.costUsd,
-          nog_verdict: 'NOG_PASS',
+          nog_verdict: 'NOG_DECISION_ACCEPTED',
           nog_reason: summary || '',
         });
 
@@ -3139,9 +3154,9 @@ function invokeNog(id) {
         return;
       }
 
-      // RETURN verdict.
-      log('info', 'nog', { id, verdict: 'RETURN', round, durationMs, summary });
-      registerEvent(id, 'NOG_RETURN', { round, apendment_cycle: round });
+      // REJECTED verdict (translated from RETURN if legacy) → NOG_DECISION{verdict: REJECTED}
+      log('info', 'nog', { id, verdict: 'REJECTED', round, durationMs, summary });
+      registerEvent(id, 'NOG_DECISION', { round, verdict: 'REJECTED', reason: summary || 'Nog review findings — see slice file', apendment_cycle: round });
 
       // Append round entry to PARKED file before handleNogReturn rewrites it.
       const romTelemetryReturn = extractRomTelemetry(doneReportContents);
@@ -3153,7 +3168,7 @@ function invokeNog(id) {
         tokensIn: romTelemetryReturn.tokensIn,
         tokensOut: romTelemetryReturn.tokensOut,
         costUsd: romTelemetryReturn.costUsd,
-        nog_verdict: 'NOG_RETURN',
+        nog_verdict: 'NOG_DECISION_REJECTED',
         nog_reason: summary || 'Nog review findings — see slice file',
       });
 
@@ -3229,7 +3244,7 @@ function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceCon
     '',
     `This is a Nog code review return for slice ${rootId} (round ${round} of 5).`,
     '',
-    '**IMPORTANT: The watcher handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
+    '**IMPORTANT: The orchestrator handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
     '',
     '### Nog review summary',
     '',
@@ -3264,16 +3279,18 @@ function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceCon
 /**
  * hasNogReviewEvent(id)
  *
- * Returns true if register.jsonl contains a NOG_PASS or NOG_ESCALATION event
+ * Returns true if register.jsonl contains a NOG_DECISION or NOG_ESCALATION event
  * for this slice ID — meaning Nog has already reviewed it.
  */
 function hasNogReviewEvent(id) {
   try {
     const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
+    resetDedupeState();
     for (const line of lines) {
       try {
-        const entry = JSON.parse(line);
-        if (entry.id === String(id) && ['NOG_PASS', 'NOG_ESCALATION'].includes(entry.event)) {
+        const raw = JSON.parse(line);
+        const entry = translateEvent(raw);
+        if (entry && entry.id === String(id) && ['NOG_DECISION', 'NOG_ESCALATION'].includes(entry.event)) {
           return true;
         }
       } catch (_) {}
@@ -3283,7 +3300,7 @@ function hasNogReviewEvent(id) {
 }
 
 // ---------------------------------------------------------------------------
-// ERROR file (written by watcher on invocation failure or invalid slice)
+// ERROR file (written by orchestrator on invocation failure or invalid slice)
 // ---------------------------------------------------------------------------
 
 /**
@@ -3313,7 +3330,7 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
     '---',
     `id: "${id}"`,
     `title: "Slice ${id} — ${reason}"`,
-    'from: watcher',
+    'from: orchestrator',
     'to: chiefobrien',
     'status: ERROR',
     `slice_id: "${id}"`,
@@ -3398,7 +3415,7 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
     };
     fs.writeFileSync(path.join(errorsDir, `${id}-ERROR.json`), JSON.stringify(jsonRecord, null, 2));
   } catch (_) {
-    // Must never crash the watcher
+    // Must never crash the orchestrator
   }
 }
 
@@ -3529,7 +3546,7 @@ function getLatestRegisterEvent(sliceId) {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const entry = JSON.parse(lines[i]);
-        if (entry.id === id) return entry;
+        if ((entry.slice_id || entry.id) === id) return entry;
       } catch (_) {}
     }
   } catch (_) {}
@@ -3551,7 +3568,7 @@ function getLatestLifecycleEvent(sliceId) {
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const entry = JSON.parse(lines[i]);
-        if (entry.id === id && !entry.event.endsWith('_REQUESTED')) return entry;
+        if ((entry.slice_id || entry.id) === id && !entry.event.endsWith('_REQUESTED')) return entry;
       } catch (_) {}
     }
   } catch (_) {}
@@ -3878,9 +3895,8 @@ function poll() {
       log('info', 'evaluator', { id: doneId, msg: 'Legacy merge slice auto-accepted (deprecated path)' });
       const acceptedPath = path.join(QUEUE_DIR, `${doneId}-ACCEPTED.md`);
       try { fs.renameSync(donePath, acceptedPath); } catch (_) {}
-      // Canonical order: REVIEW_RECEIVED (verdict on file) → ACCEPTED (decision)
-      registerEvent(doneId, 'REVIEW_RECEIVED', { verdict: 'ACCEPTED', reason: 'auto-accepted merge', cycle: 0 });
-      registerEvent(doneId, 'ACCEPTED', { cycle: 0 });
+      // Canonical: NOG_DECISION (auto-accepted merge)
+      registerEvent(doneId, 'NOG_DECISION', { verdict: 'ACCEPTED', reason: 'auto-accepted merge', cycle: 0, round: 0 });
       print(`  ${C.green}${SYM.check}${C.reset} Slice ${doneId}${SYM.dash}Merge auto-accepted`);
       continue;
     }
@@ -3930,7 +3946,7 @@ function poll() {
       writeHeartbeat();
       invokeEvaluator(doneId);
     } else {
-      // Emit ROM_WAITING_FOR_NOG: Rom is idle-blocked while Nog reviews.
+      // Emit NOG_INVOKED: Rom is idle-blocked while Nog reviews.
       const resolvedParked = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
       let waitRound = 1;
       try {
@@ -3938,7 +3954,7 @@ function poll() {
         const nogRounds = (parkedContent.match(/^## Nog Review — Round \d+/gm) || []).length;
         waitRound = nogRounds + 1;
       } catch (_) {}
-      registerEvent(doneId, 'ROM_WAITING_FOR_NOG', { round: waitRound });
+      registerEvent(doneId, 'NOG_INVOKED', { round: waitRound });
 
       heartbeatState.status = 'nog_review';
       writeHeartbeat();
@@ -4214,11 +4230,11 @@ function crashRecovery() {
         log('warn', 'startup_recovery', { id, msg: 'Failed to delete orphaned IN_PROGRESS', error: err.message });
       }
     } else {
-      // Check if slice was paused when the watcher restarted.
+      // Check if slice was paused when the orchestrator restarted.
       const latestEvent = getLatestRegisterEvent(id);
       if (latestEvent && latestEvent.event === 'ROM_PAUSED') {
         // Slice was paused — leave it IN_PROGRESS but block new dispatches.
-        // The child process is gone (watcher restarted), so emit a
+        // The child process is gone (orchestrator restarted), so emit a
         // paused_child_died error so the UI can prompt Abort + re-stage.
         processing = true;
         heartbeatState.status = 'processing';
@@ -4267,7 +4283,7 @@ function crashRecovery() {
  * Returns "001" if the directory is empty or unreadable.
  *
  * This function is purely computational — it does not write any files.
- * Exported so the watcher can call it from bridge/next-id.js.
+ * Exported so the orchestrator can call it from bridge/next-id.js.
  */
 function nextSliceId(queueDir) {
   const stagedDir = path.join(path.dirname(queueDir), 'staged');

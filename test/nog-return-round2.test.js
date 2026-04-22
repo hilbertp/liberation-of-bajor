@@ -48,12 +48,12 @@ function test(name, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Import just parseFrontmatter and truncStderr from watcher.js (via regex
+// Import just parseFrontmatter and truncStderr from orchestrator.js (via regex
 // extraction to avoid side effects of requiring the full module)
 // ---------------------------------------------------------------------------
 
 const watcherSource = fs.readFileSync(
-  path.join(__dirname, '..', 'bridge', 'watcher.js'),
+  path.join(__dirname, '..', 'bridge', 'orchestrator.js'),
   'utf-8'
 );
 
@@ -254,7 +254,7 @@ test('ERROR register event payload has phase, command, exit_code, stderr_tail', 
 });
 
 // ---------------------------------------------------------------------------
-// Test 6: Verify watcher.js source has enriched ERROR events
+// Test 6: Verify orchestrator.js source has enriched ERROR events
 // ---------------------------------------------------------------------------
 
 test('All registerEvent ERROR calls include phase field', () => {
@@ -344,7 +344,7 @@ test('Evaluator prompt uses APENDMENT_NEEDED verdict string', () => {
 // Test 10: handleApendment function exists (replaces handleAmendment)
 // ---------------------------------------------------------------------------
 
-test('handleApendment function exists in watcher source', () => {
+test('handleApendment function exists in orchestrator source', () => {
   assert.ok(
     watcherSource.includes('function handleApendment('),
     'Watcher should have handleApendment function'

@@ -38,7 +38,7 @@ If you agree with the two-copy + wormhole approach:
 - The sandbox path is session-specific (`/sessions/blissful-affectionate-wright/...`). How does a persistent Wormhole daemon know where to point? Options: stable symlink written at session start, or session-init handshake where Cowork writes its current path to a known macOS location.
 - Source of truth rules: who wins when both sides write? Suggestion: sandbox owns slice briefs and Kira decisions; macOS owns DONE files, error logs, watcher events. Zones mostly don't overlap — confirm or redesign.
 - Sync mechanism: fswatch + rsync? chokidar (Node.js)? Something else?
-- Startup: launchd daemon? Or watcher.js absorbs the sync responsibility?
+- Startup: launchd daemon? Or orchestrator.js absorbs the sync responsibility?
 
 **Question 3:** Is it necessary for the Wormhole to run on the macOS host rather than inside the sandbox? Confirm the constraint.
 

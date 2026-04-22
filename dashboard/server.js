@@ -17,6 +17,7 @@ const DASHBOARD    = path.join(__dirname, 'lcars-dashboard.html');
 const FIRST_OUTPUT  = path.join(REPO_ROOT, 'bridge', 'first-output.json');
 const NOG_ACTIVE    = path.join(REPO_ROOT, 'bridge', 'nog-active.json');
 const CONTROL_DIR   = path.join(REPO_ROOT, 'bridge', 'control');
+const { translateEvent, resetDedupeState } = require(path.join(REPO_ROOT, 'bridge', 'lifecycle-translate'));
 
 const CORS_ORIGIN  = 'https://dax-dashboard.lovable.app';
 
@@ -184,12 +185,17 @@ function parseRoundsArray(text) {
 }
 
 // ── Register reader ──────────────────────────────────────────────────────────
+// All register reads route through the lifecycle translation shim so legacy
+// event names (NOG_PASS, REVIEW_RECEIVED, ACCEPTED-as-event, etc.) are
+// presented as canonical names to every consumer.
 function readRegister() {
   try {
     const raw = fs.readFileSync(REGISTER, 'utf8');
-    return raw.split('\n').filter(l => l.trim()).map(l => {
+    const parsed = raw.split('\n').filter(l => l.trim()).map(l => {
       try { return JSON.parse(l); } catch (_) { return null; }
     }).filter(Boolean);
+    resetDedupeState();
+    return parsed.map(ev => translateEvent(ev)).filter(Boolean);
   } catch (_) { return []; }
 }
 
@@ -278,12 +284,12 @@ function buildBridgeData() {
         economics.totalSlices++;
       }
     }
-    // REVIEW_RECEIVED carries the verdict; REVIEWED is the legacy name
-    if (ev.event === 'REVIEW_RECEIVED' || ev.event === 'REVIEWED') {
+    // NOG_DECISION carries the verdict (translated from legacy REVIEWED/NOG_PASS)
+    if (ev.event === 'NOG_DECISION') {
       reviewedMap[ev.id] = ev.verdict;
     }
-    // ACCEPTED after an ERROR means Philipp overrode the watcher (approve|slice|amend|reject|update-body)
-    if (ev.event === 'ACCEPTED' || ev.event === 'MERGED') {
+    // HUMAN_APPROVAL or MERGED means the slice landed on main
+    if (ev.event === 'HUMAN_APPROVAL' || ev.event === 'MERGED') {
       acceptedSet.add(ev.id);
     }
   }
@@ -761,7 +767,7 @@ const server = http.createServer(async (req, res) => {
     const controlFile = path.join(CONTROL_DIR, `return-${id}-${Date.now()}.json`);
     try {
       fs.writeFileSync(controlFile, JSON.stringify({ action: 'return_to_stage', slice_id: id }), 'utf8');
-      writeRegisterEvent({ event: 'RETURN_TO_STAGE_REQUESTED', id, source: 'dashboard' });
+      writeRegisterEvent({ event: 'RETURN_TO_STAGE_REQUESTED', slice_id: id, source: 'dashboard' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -780,7 +786,7 @@ const server = http.createServer(async (req, res) => {
     const controlFile = path.join(CONTROL_DIR, `${action}-${id}-${Date.now()}.json`);
     try {
       fs.writeFileSync(controlFile, JSON.stringify({ action, slice_id: id }), 'utf8');
-      writeRegisterEvent({ event: `${action.toUpperCase()}_REQUESTED`, id, source: 'dashboard' });
+      writeRegisterEvent({ event: `${action.toUpperCase()}_REQUESTED`, slice_id: id, source: 'dashboard' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {

@@ -34,7 +34,7 @@ Your proposed Wormhole (macOS daemon mirroring between a sandbox-internal copy a
 - Wormhole = local MCP server (native macOS Node process).
 - Cowork sessions call Wormhole tools (`wormhole_write_file`, `wormhole_append_jsonl`, `wormhole_move`, `wormhole_delete`) for writes.
 - Reads continue via VirtioFS (already permissionless).
-- watcher.js stays unchanged — still native, still writes directly.
+- orchestrator.js stays unchanged — still native, still writes directly.
 - No daemon, no launchd, no chokidar, no session handshake.
 
 ### POC evidence (2026-04-14)

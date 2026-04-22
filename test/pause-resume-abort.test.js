@@ -13,7 +13,7 @@
  *   7. Watcher restart with a paused slice (no re-spawn)
  *   8. Dashboard: Pause button enabled (no disabled attr, no UI2 tooltip)
  *   9. Dashboard: Resume + Abort buttons enabled
- *  10. No "amendment" (old spelling) in dashboard or watcher
+ *  10. No "amendment" (old spelling) in dashboard or orchestrator
  *
  * Run: node test/pause-resume-abort.test.js
  */
@@ -27,7 +27,7 @@ const assert = require('assert');
 // ---------------------------------------------------------------------------
 
 const watcherSource = fs.readFileSync(
-  path.join(__dirname, '..', 'bridge', 'watcher.js'),
+  path.join(__dirname, '..', 'bridge', 'orchestrator.js'),
   'utf-8'
 );
 
@@ -66,20 +66,20 @@ console.log('--- Part 1: Backend pause action ---');
 test('Watcher handles "pause" control action', () => {
   assert.ok(
     watcherSource.includes("'pause'") || watcherSource.includes('"pause"'),
-    'watcher.js must handle action === "pause"'
+    'orchestrator.js must handle action === "pause"'
   );
 });
 
 test('Pause emits ROM_PAUSED register event', () => {
   const matches = watcherSource.match(/registerEvent\([^)]*'ROM_PAUSED'/g) ||
                   watcherSource.match(/registerEvent\([^)]*"ROM_PAUSED"/g);
-  assert.ok(matches && matches.length >= 1, 'watcher.js must emit ROM_PAUSED via registerEvent');
+  assert.ok(matches && matches.length >= 1, 'orchestrator.js must emit ROM_PAUSED via registerEvent');
 });
 
 test('Pause sends SIGSTOP to child process', () => {
   assert.ok(
     watcherSource.includes('SIGSTOP'),
-    'watcher.js must use SIGSTOP for pause'
+    'orchestrator.js must use SIGSTOP for pause'
   );
 });
 
@@ -89,7 +89,7 @@ test('PID bookkeeping: active child processes tracked by slice ID', () => {
     watcherSource.includes('activeChildren') ||
     watcherSource.includes('childProcessMap') ||
     watcherSource.includes('romProcesses'),
-    'watcher.js must track child processes by slice ID'
+    'orchestrator.js must track child processes by slice ID'
   );
 });
 
@@ -102,20 +102,20 @@ console.log('\n--- Part 1: Backend resume action ---');
 test('Watcher handles "resume" control action', () => {
   assert.ok(
     watcherSource.includes("'resume'") || watcherSource.includes('"resume"'),
-    'watcher.js must handle action === "resume"'
+    'orchestrator.js must handle action === "resume"'
   );
 });
 
 test('Resume emits ROM_RESUMED register event', () => {
   const matches = watcherSource.match(/registerEvent\([^)]*'ROM_RESUMED'/g) ||
                   watcherSource.match(/registerEvent\([^)]*"ROM_RESUMED"/g);
-  assert.ok(matches && matches.length >= 1, 'watcher.js must emit ROM_RESUMED via registerEvent');
+  assert.ok(matches && matches.length >= 1, 'orchestrator.js must emit ROM_RESUMED via registerEvent');
 });
 
 test('Resume sends SIGCONT to child process', () => {
   assert.ok(
     watcherSource.includes('SIGCONT'),
-    'watcher.js must use SIGCONT for resume'
+    'orchestrator.js must use SIGCONT for resume'
   );
 });
 
@@ -128,31 +128,30 @@ console.log('\n--- Part 1: Backend abort action ---');
 test('Watcher handles "abort" control action', () => {
   assert.ok(
     watcherSource.includes("'abort'") || watcherSource.includes('"abort"'),
-    'watcher.js must handle action === "abort"'
+    'orchestrator.js must handle action === "abort"'
   );
 });
 
 test('Abort emits ROM_ABORTED register event', () => {
   const matches = watcherSource.match(/registerEvent\([^)]*'ROM_ABORTED'/g) ||
                   watcherSource.match(/registerEvent\([^)]*"ROM_ABORTED"/g);
-  assert.ok(matches && matches.length >= 1, 'watcher.js must emit ROM_ABORTED via registerEvent');
+  assert.ok(matches && matches.length >= 1, 'orchestrator.js must emit ROM_ABORTED via registerEvent');
 });
 
 test('Abort sends SIGKILL to child process', () => {
   assert.ok(
     watcherSource.includes('SIGKILL'),
-    'watcher.js must use SIGKILL for abort'
+    'orchestrator.js must use SIGKILL for abort'
   );
 });
 
 test('Abort moves slice to STAGED', () => {
-  // Should reference staged dir and STAGED status
-  const abortIdx = watcherSource.indexOf('ROM_ABORTED');
-  assert.ok(abortIdx > -1, 'ROM_ABORTED must exist');
-  // Check nearby code references staged
-  const nearby = watcherSource.slice(Math.max(0, abortIdx - 500), abortIdx + 500);
+  // The handleAbort function must reference STAGED to move the slice back
+  const fnMatch = watcherSource.match(/function handleAbort\([^)]*\)\s*\{([\s\S]*?)^}/m);
+  assert.ok(fnMatch, 'handleAbort function must exist');
+  const body = fnMatch[1];
   assert.ok(
-    nearby.includes('STAGED') || nearby.includes('staged'),
+    body.includes('STAGED') || body.includes('staged'),
     'Abort handler must move slice to STAGED'
   );
 });
@@ -179,13 +178,13 @@ test('Resume rejects when latest event is not ROM_PAUSED', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part 2: Paused-state survival across watcher restart
+// Part 2: Paused-state survival across orchestrator restart
 // ---------------------------------------------------------------------------
 
 console.log('\n--- Part 2: Paused-state persistence ---');
 
 test('Watcher checks register events on startup for paused slices', () => {
-  // On startup/poll, the watcher should check if a slice has ROM_PAUSED as latest event
+  // On startup/poll, the orchestrator should check if a slice has ROM_PAUSED as latest event
   // and skip re-spawning Rom for it
   assert.ok(
     watcherSource.includes('ROM_PAUSED'),
@@ -320,7 +319,7 @@ test('Server has abort API endpoint', () => {
 });
 
 // ---------------------------------------------------------------------------
-// AC 8: No old spelling "amendment" in dashboard or watcher
+// AC 8: No old spelling "amendment" in dashboard or orchestrator
 // ---------------------------------------------------------------------------
 
 console.log('\n--- AC 8: APENDMENT spelling ---');
@@ -337,7 +336,7 @@ test('No "amendment" (lowercase) in dashboard', () => {
   );
 });
 
-test('No "amendment" (any case) in watcher outside legacy compat', () => {
+test('No "amendment" (any case) in orchestrator outside legacy compat', () => {
   const lines = watcherSource.split('\n');
   const hits = lines.filter(line => {
     const lower = line.toLowerCase();
@@ -354,7 +353,7 @@ test('No "amendment" (any case) in watcher outside legacy compat', () => {
     return true;
   });
   assert.strictEqual(hits.length, 0,
-    `Found ${hits.length} non-compat "amendment" hit(s) in watcher: ${hits.map(l => l.trim()).join(' | ')}`
+    `Found ${hits.length} non-compat "amendment" hit(s) in orchestrator: ${hits.map(l => l.trim()).join(' | ')}`
   );
 });
 

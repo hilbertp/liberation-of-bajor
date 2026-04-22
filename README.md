@@ -46,7 +46,7 @@ bridge/
   staged/         # Staging area for Philipp's brief review (Rubicon)
   register.jsonl  # Append-only event log (watcher + evaluator)
   timesheet.jsonl # Append-only T&T log for all roles (human and watcher)
-  watcher.js      # Detects new briefs, invokes O'Brien
+  orchestrator.js # Detects new briefs, invokes O'Brien
   bridge.config.json
 dashboard/        # Web UI served on port 4747
 .claude/

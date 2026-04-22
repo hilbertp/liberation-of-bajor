@@ -24,7 +24,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { nextSliceId } = require('./watcher.js');
+const { nextSliceId } = require('./orchestrator.js');
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -34,7 +34,7 @@ const QUEUE_DIR  = path.resolve(__dirname, 'queue');
 const STAGED_DIR = path.resolve(__dirname, 'staged');
 
 // ---------------------------------------------------------------------------
-// Required fields — must match watcher.js REQUIRED_FIELDS exactly
+// Required fields — must match orchestrator.js REQUIRED_FIELDS exactly
 // ---------------------------------------------------------------------------
 
 const REQUIRED_FIELDS = ['id', 'title', 'from', 'to', 'priority', 'created'];

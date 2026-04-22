@@ -27,7 +27,7 @@ This tracking must work on both the legacy path and the Ruflo path, outputting t
 
 ## What already exists
 
-- `bridge/watcher.js` already captures token data from `claude -p --output-format json` response (`session.tokensIn`, `session.tokensOut`, `session.costUsd`) — but only at the **session level** (aggregate across all commissions in one watcher run), not per-slice.
+- `bridge/orchestrator.js` already captures token data from `claude -p --output-format json` response (`session.tokensIn`, `session.tokensOut`, `session.costUsd`) — but only at the **session level** (aggregate across all commissions in one watcher run), not per-slice.
 - `pickupTime` is tracked per commission inside `invokeOBrien()` — elapsed time is already calculated, just not persisted to disk.
 - `bridge/timesheet.jsonl` exists with a manual schema used by DS9 roles. Not auto-populated by the watcher.
 - `ds9:estimate-hours` skill exists for manual use by DS9 roles. Not wired into O'Brien's flow.

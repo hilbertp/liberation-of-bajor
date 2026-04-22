@@ -1,7 +1,7 @@
 # Slice Pipeline — Technical Specification
 
 *Derived from: [`slice-lifecycle.md`](./slice-lifecycle.md) (the BR / source of truth).*
-*Describes: how the BR is implemented on disk, in `bridge/watcher.js`, and in the Ops Center server.*
+*Describes: how the BR is implemented on disk, in `bridge/orchestrator.js`, and in the Ops Center server.*
 *Scope rule: if this document disagrees with the BR, this document is wrong. Every section below exists to realise the BR — nothing more.*
 
 ---
@@ -35,7 +35,7 @@ bridge/
   logs/            — watcher + server runtime logs
   errors/          — error sidecars (BLOCKED and ERROR details)
   new-slice.js     — sole slice-creation tool (O'Brien)
-  watcher.js       — orchestrator (the only process that moves slice files across directories and performs git ops)
+  orchestrator.js  — orchestrator (the only process that moves slice files across directories and performs git ops)
   register.jsonl   — append-only event log (see §7)
   heartbeat.json   — liveness signal from the watcher
 ```
@@ -147,7 +147,7 @@ Each transition is performed by exactly one actor. The primitive is either an at
 |-------------|----------------------------------------|------------------------------------------------------------------------------------------|
 | O'Brien     | `bridge/new-slice.js`                  | Sole slice-creation path. Enforces required fields, assigns the ID, writes to `staged/`. |
 | Philipp     | Ops Center (HTTP UI)                   | Approve / reject staged slices. Backed by the approve endpoint (logs `HUMAN_APPROVAL`).  |
-| Watcher     | `bridge/watcher.js`                    | Single owner of directory moves + git ops. Polls on interval; one slice at a time.       |
+| Watcher     | `bridge/orchestrator.js`                    | Single owner of directory moves + git ops. Polls on interval; one slice at a time.       |
 | Rom         | `claude -p` (spawned by watcher)       | Writes code on the slice branch + appends a DONE report to the slice file.               |
 | Nog         | `claude -p` (spawned by watcher)       | Reads the slice file + diff, appends a verdict (PASS / REJECT / ESCALATE-to-OBRIEN).     |
 
@@ -282,7 +282,7 @@ The BR explicitly says these are flagged for triage and **not** part of the requ
 
 1. **~~State-name divergence: QUEUED vs. `-PENDING.md`.~~** Resolved in slice 146. On-disk suffix is now `-QUEUED.md`. All write sites produce `-QUEUED.md` with `status: QUEUED`. Read sites dual-accept both `-QUEUED.md` and legacy `-PENDING.md` for in-flight migration.
 2. **~~State-name divergence: IN_REVIEW vs. `-REVIEWED.md`.~~** Resolved in slice 147. On-disk suffix is now `-IN_REVIEW.md`. All write sites produce `-IN_REVIEW.md`. Legacy `-REVIEWED.md` files are dual-read for migration.
-3. **`ARCHIVED` name collision** (BR §Known code divergences). `bridge/watcher.js` around line 1826 reused `-ARCHIVED.md` as a "parked-during-review" suffix before Nog evaluates, colliding with the terminal ARCHIVED state. **Fixed in slice 145** — parked suffix renamed to `-PARKED.md`. Legacy slices retain `-ARCHIVED.md` as the parked suffix with fallback reads in both the watcher and dashboard server.
+3. **`ARCHIVED` name collision** (BR §Known code divergences). `bridge/orchestrator.js` around line 1826 reused `-ARCHIVED.md` as a "parked-during-review" suffix before Nog evaluates, colliding with the terminal ARCHIVED state. **Fixed in slice 145** — parked suffix renamed to `-PARKED.md`. Legacy slices retain `-ARCHIVED.md` as the parked suffix with fallback reads in both the watcher and dashboard server.
 4. **~~Undocumented `-REVIEWED.md` sidecar~~** (BR §Known code divergences). Documented in slice 147 — see §10.1 "Rejection-round sidecar." The sidecar (now `-IN_REVIEW.md`) is the terminal artefact of a rejected review round. Full converge to append-only pattern deferred to a future slice.
 
 These are candidates for their own slices. None are blocking.

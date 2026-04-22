@@ -32,7 +32,7 @@ Exports `appendKiraEvent(event)`. Appends one JSON line to `bridge/kira-events.j
 }
 ```
 
-Pattern: same as `slicelog.js` — small module, `watcher.js` imports it.
+Pattern: same as `slicelog.js` — small module, `orchestrator.js` imports it.
 
 **Watcher integration points:**
 

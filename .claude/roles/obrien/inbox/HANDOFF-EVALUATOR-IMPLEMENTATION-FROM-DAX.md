@@ -9,7 +9,7 @@
 
 ## Why this exists
 
-The Cowork-based `kira-commission-watch` scheduled task has been killed — it was creating a sandbox artifact every minute, polluting Philipp's workspace. You are building its replacement: an evaluator that runs inside `watcher.js` and handles the complete commission lifecycle autonomously.
+The Cowork-based `kira-commission-watch` scheduled task has been killed — it was creating a sandbox artifact every minute, polluting Philipp's workspace. You are building its replacement: an evaluator that runs inside `orchestrator.js` and handles the complete commission lifecycle autonomously.
 
 This handoff gives you the architectural context you need to implement B0. Kira will write the commission with specific ACs — this document tells you WHY the design is what it is so you can make good judgment calls during implementation.
 
@@ -17,7 +17,7 @@ This handoff gives you the architectural context you need to implement B0. Kira 
 
 ## What you're building
 
-A second pass in the `watcher.js` poll loop that evaluates O'Brien's DONE reports against the original commission's acceptance criteria, then either accepts (triggering a merge) or amends (writing a new PENDING for O'Brien to fix).
+A second pass in the `orchestrator.js` poll loop that evaluates O'Brien's DONE reports against the original commission's acceptance criteria, then either accepts (triggering a merge) or amends (writing a new PENDING for O'Brien to fix).
 
 **The complete autonomous cycle:**
 
@@ -34,13 +34,13 @@ Kira writes PENDING → you execute → DONE
 
 ## Architecture decisions you need to know
 
-### 1. It runs inside `watcher.js`, not as a separate process
+### 1. It runs inside `orchestrator.js`, not as a separate process
 
 The evaluator uses the same `execFile`/`claude -p` pattern you already have for commission execution. It shares the `processing` flag — only one `claude -p` call at a time. PENDING commissions always take priority over DONE evaluations.
 
 ### 2. The COMMISSION archive file is your AC source
 
-After you finish a commission, the watcher already renames IN_PROGRESS to `{id}-COMMISSION.md` (line 540 of current watcher.js). This archived file contains the full commission content including acceptance criteria. The evaluator reads this file — don't parse the register.
+After you finish a commission, the watcher already renames IN_PROGRESS to `{id}-COMMISSION.md` (line 540 of current orchestrator.js). This archived file contains the full commission content including acceptance criteria. The evaluator reads this file — don't parse the register.
 
 ### 3. New queue states
 
@@ -117,7 +117,7 @@ Feed this via stdin to `claude -p`, same as commission execution. Parse the JSON
 
 - Kira's Cowork integration — that's separate (B4), not your problem
 - Dashboard rendering of new states — that's B2, not B0
-- Docker containerization — B0 ships into the existing `watcher.js` on Philipp's Mac, no Docker needed yet
+- Docker containerization — B0 ships into the existing `orchestrator.js` on Philipp's Mac, no Docker needed yet
 - The evaluator prompt wording — start with the above, iterate if quality is poor. The amendment cap prevents runaway loops regardless
 
 ---
@@ -125,6 +125,6 @@ Feed this via stdin to `claude -p`, same as commission execution. Parse the JSON
 ## Reference files
 
 - Full ADR: `repo/.claude/roles/kira/RESPONSE-EVALUATOR-ARCHITECTURE-FROM-DAX.md` (complete design with register event timeline example)
-- Current watcher: `repo/bridge/watcher.js` (945 lines — read it, especially `invokeOBrien`, `poll`, `crashRecovery`, `registerEvent`)
+- Current watcher: `repo/bridge/orchestrator.js` (945 lines — read it, especially `invokeOBrien`, `poll`, `crashRecovery`, `registerEvent`)
 - Current server: `repo/dashboard/server.js` (137 lines — the CORS fix target)
 - Architecture doc: `repo/docs/architecture/BET2-RELAY-DASHBOARD-ARCHITECTURE.md` Section 10 (B0 detail)

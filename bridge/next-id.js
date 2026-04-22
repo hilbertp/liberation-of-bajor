@@ -4,7 +4,7 @@
 // Usage: node bridge/next-id.js
 
 const path = require('path');
-const { nextSliceId } = require('./watcher.js');
+const { nextSliceId } = require('./orchestrator.js');
 
 const queueDir = path.resolve(__dirname, 'queue');
 console.log(nextSliceId(queueDir));

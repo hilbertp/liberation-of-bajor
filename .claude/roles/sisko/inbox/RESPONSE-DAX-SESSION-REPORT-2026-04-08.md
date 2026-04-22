@@ -19,7 +19,7 @@ Single session. Three deliverables, twelve learnings, five future ideas captured
 **Response artifact:** `roles/sisko/RESPONSE-BET2-ARCHITECTURE-FROM-DAX.md`
 **Human-equivalent:** 7h (5h initial + 2h revisions)
 
-Onboarded from scratch — read full codebase (Architecture v1, PRD v2, Capability Map, all contracts, watcher.js, server.js, KIRA.md, CLAUDE.md, all handoffs). Produced architecture document covering relay service, dashboard spec, migration path, repo topology, risk assessment.
+Onboarded from scratch — read full codebase (Architecture v1, PRD v2, Capability Map, all contracts, orchestrator.js, server.js, KIRA.md, CLAUDE.md, all handoffs). Produced architecture document covering relay service, dashboard spec, migration path, repo topology, risk assessment.
 
 Three revision cycles with Sisko. Key decisions resolved:
 

@@ -39,7 +39,7 @@ function test(name, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Extracted helpers — replicate watcher logic locally to test in isolation
+// Extracted helpers — replicate orchestrator logic locally to test in isolation
 // ---------------------------------------------------------------------------
 
 function parseFrontmatter(content) {
@@ -78,7 +78,7 @@ function updateFrontmatter(text, updates) {
   return [...lines.slice(0, start + 1), ...fmLines, ...lines.slice(end)].join('\n');
 }
 
-// Replicate appendRoundEntry from watcher.js
+// Replicate appendRoundEntry from orchestrator.js
 function appendRoundEntry(sliceFilePath, roundEntry) {
   let content;
   try {
@@ -166,11 +166,11 @@ function appendRoundEntry(sliceFilePath, roundEntry) {
 }
 
 // ---------------------------------------------------------------------------
-// Read watcher source for structural assertions
+// Read orchestrator source for structural assertions
 // ---------------------------------------------------------------------------
 
 const watcherSource = fs.readFileSync(
-  path.join(__dirname, '..', 'bridge', 'watcher.js'),
+  path.join(__dirname, '..', 'bridge', 'orchestrator.js'),
   'utf-8'
 );
 
@@ -276,8 +276,8 @@ test('total_* fields equal sum of per-round telemetry', () => {
 // Test (c): MAX_ROUNDS_EXHAUSTED emits with correct shape and no new ID
 // ---------------------------------------------------------------------------
 
-test('MAX_ROUNDS_EXHAUSTED in watcher uses parent ID and round: 5', () => {
-  // Verify in watcher source: MAX_ROUNDS_EXHAUSTED event has round: 5
+test('MAX_ROUNDS_EXHAUSTED in orchestrator uses parent ID and round: 5', () => {
+  // Verify in orchestrator source: MAX_ROUNDS_EXHAUSTED event has round: 5
   const maxRoundsBlock = watcherSource.split('\n').reduce((acc, line, i, arr) => {
     if (line.includes("'MAX_ROUNDS_EXHAUSTED'")) {
       acc.push(arr.slice(i, i + 10).join('\n'));
@@ -285,7 +285,7 @@ test('MAX_ROUNDS_EXHAUSTED in watcher uses parent ID and round: 5', () => {
     return acc;
   }, []);
 
-  assert.ok(maxRoundsBlock.length > 0, 'MAX_ROUNDS_EXHAUSTED must exist in watcher');
+  assert.ok(maxRoundsBlock.length > 0, 'MAX_ROUNDS_EXHAUSTED must exist in orchestrator');
   assert.ok(
     maxRoundsBlock.some(b => b.includes('round: 5')),
     'MAX_ROUNDS_EXHAUSTED must emit with round: 5'
@@ -311,7 +311,7 @@ test('MAX_ROUNDS_EXHAUSTED in watcher uses parent ID and round: 5', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test (d): handleNogReturn in watcher does NOT call nextSliceId
+// Test (d): handleNogReturn in orchestrator does NOT call nextSliceId
 // ---------------------------------------------------------------------------
 
 test('handleNogReturn does NOT call nextSliceId (ID retention)', () => {
@@ -338,7 +338,7 @@ test('handleNogReturn does NOT call nextSliceId (ID retention)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test (e): handleApendment in watcher does NOT call nextSliceId
+// Test (e): handleApendment in orchestrator does NOT call nextSliceId
 // ---------------------------------------------------------------------------
 
 test('handleApendment does NOT call nextSliceId (ID retention)', () => {
@@ -364,17 +364,17 @@ test('handleApendment does NOT call nextSliceId (ID retention)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test (f): appendRoundEntry function exists in watcher
+// Test (f): appendRoundEntry function exists in orchestrator
 // ---------------------------------------------------------------------------
 
-test('appendRoundEntry and extractRomTelemetry exist in watcher', () => {
+test('appendRoundEntry and extractRomTelemetry exist in orchestrator', () => {
   assert.ok(
     watcherSource.includes('function appendRoundEntry('),
-    'appendRoundEntry must exist in watcher.js'
+    'appendRoundEntry must exist in orchestrator.js'
   );
   assert.ok(
     watcherSource.includes('function extractRomTelemetry('),
-    'extractRomTelemetry must exist in watcher.js'
+    'extractRomTelemetry must exist in orchestrator.js'
   );
 });
 
@@ -454,19 +454,19 @@ test('Evaluator prompt verdict options include APENDMENT_NEEDED', () => {
 // Test (i): Register events for Nog return carry round and apendment_cycle
 // ---------------------------------------------------------------------------
 
-test('NOG_RETURN register event includes apendment_cycle field', () => {
-  // Find registerEvent calls with NOG_RETURN
+test('NOG_DECISION register event for REJECTED includes apendment_cycle field', () => {
+  // Find registerEvent calls with NOG_DECISION that carry REJECTED verdict
   const lines = watcherSource.split('\n');
-  const nogReturnCalls = [];
+  const nogDecisionCalls = [];
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes("'NOG_RETURN'") && lines[i].includes('registerEvent')) {
-      nogReturnCalls.push(lines.slice(i, i + 5).join('\n'));
+    if (lines[i].includes("'NOG_DECISION'") && lines[i].includes('registerEvent')) {
+      nogDecisionCalls.push(lines.slice(i, i + 5).join('\n'));
     }
   }
-  assert.ok(nogReturnCalls.length > 0, 'Must have NOG_RETURN registerEvent calls');
+  assert.ok(nogDecisionCalls.length > 0, 'Must have NOG_DECISION registerEvent calls');
   assert.ok(
-    nogReturnCalls.some(c => c.includes('apendment_cycle')),
-    'NOG_RETURN register event must include apendment_cycle'
+    nogDecisionCalls.some(c => c.includes('apendment_cycle')),
+    'NOG_DECISION REJECTED register event must include apendment_cycle'
   );
 });
 

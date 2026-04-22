@@ -51,7 +51,7 @@ agents, and the DONE template pre-fills the branch name.
 
 ### 1. FUSE-safe checkout — never rely on `git checkout`
 
-Three FUSE-safe checkout functions, all in `bridge/watcher.js`:
+Three FUSE-safe checkout functions, all in `bridge/orchestrator.js`:
 
 - `fuseSafeCheckoutMain(id)` — checkout main
 - `fuseSafeCheckoutBranch(id, branchName)` — checkout existing branch
@@ -130,7 +130,7 @@ Rom's prompt explicitly prohibits:
 The DONE template pre-fills `branch: "slice/{id}"` — Rom just fills in the
 other fields. The amendment template says "The watcher handles all git branching."
 
-## Functions (all in bridge/watcher.js, "Git safety layer" section)
+## Functions (all in bridge/orchestrator.js, "Git safety layer" section)
 
 | Function | Purpose |
 |----------|---------|

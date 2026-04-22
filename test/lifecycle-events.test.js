@@ -6,7 +6,7 @@
  * Tests for slice 162 — lifecycle terminal events:
  *   1. MAX_ROUNDS_EXHAUSTED emission on round 5 Nog return
  *   2. ESCALATED_TO_OBRIEN emission on Nog ESCALATE verdict
- *   3. ROM_WAITING_FOR_NOG emission on DONE→EVALUATING transition
+ *   3. NOG_INVOKED emission on DONE→EVALUATING transition
  *   4. Return-to-stage happy path (terminal slice → STAGED)
  *   5. Return-to-stage rejection for non-terminal slices
  *
@@ -18,11 +18,11 @@ const path = require('path');
 const assert = require('assert');
 
 // ---------------------------------------------------------------------------
-// Read watcher source for static analysis tests
+// Read orchestrator source for static analysis tests
 // ---------------------------------------------------------------------------
 
 const watcherSource = fs.readFileSync(
-  path.join(__dirname, '..', 'bridge', 'watcher.js'),
+  path.join(__dirname, '..', 'bridge', 'orchestrator.js'),
   'utf-8'
 );
 
@@ -55,7 +55,7 @@ function test(name, fn) {
   }
 }
 
-// Helper: parse frontmatter (same as watcher's)
+// Helper: parse frontmatter (same as orchestrator's)
 function parseFrontmatter(content) {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return null;
@@ -81,7 +81,7 @@ console.log('\n== Lifecycle events tests (slice 162) ==\n');
 test('Watcher source contains MAX_ROUNDS_EXHAUSTED event emission', () => {
   assert.ok(
     watcherSource.includes("'MAX_ROUNDS_EXHAUSTED'"),
-    'watcher.js must emit MAX_ROUNDS_EXHAUSTED register event'
+    'orchestrator.js must emit MAX_ROUNDS_EXHAUSTED register event'
   );
 });
 
@@ -139,7 +139,7 @@ test('Worktree cleanup called in MAX_ROUNDS_EXHAUSTED path', () => {
 test('Watcher source contains ESCALATED_TO_OBRIEN event emission', () => {
   assert.ok(
     watcherSource.includes("'ESCALATED_TO_OBRIEN'"),
-    'watcher.js must emit ESCALATED_TO_OBRIEN register event'
+    'orchestrator.js must emit ESCALATED_TO_OBRIEN register event'
   );
 });
 
@@ -160,7 +160,7 @@ test('ESCALATE verdict is handled in Nog callback', () => {
   // The verdict parsing should handle ESCALATE
   assert.ok(
     watcherSource.includes("'ESCALATE'"),
-    'watcher.js must handle ESCALATE verdict from Nog'
+    'orchestrator.js must handle ESCALATE verdict from Nog'
   );
 });
 
@@ -172,34 +172,34 @@ test('Worktree cleanup called in ESCALATED_TO_OBRIEN path', () => {
   assert.ok(block.includes('cleanupWorktree'), 'ESCALATED_TO_OBRIEN path must call cleanupWorktree');
 });
 
-// ---- Part 3: ROM_WAITING_FOR_NOG ----
+// ---- Part 3: NOG_INVOKED ----
 
-test('Watcher source contains ROM_WAITING_FOR_NOG event emission', () => {
+test('Watcher source contains NOG_INVOKED event emission', () => {
   assert.ok(
-    watcherSource.includes("'ROM_WAITING_FOR_NOG'"),
-    'watcher.js must emit ROM_WAITING_FOR_NOG register event'
+    watcherSource.includes("'NOG_INVOKED'"),
+    'orchestrator.js must emit NOG_INVOKED register event'
   );
 });
 
-test('ROM_WAITING_FOR_NOG is emitted at exactly one site', () => {
-  const matches = watcherSource.match(/registerEvent\([^,]+,\s*'ROM_WAITING_FOR_NOG'/g);
-  assert.ok(matches, 'No ROM_WAITING_FOR_NOG registerEvent call found');
+test('NOG_INVOKED is emitted at exactly one site', () => {
+  const matches = watcherSource.match(/registerEvent\([^,]+,\s*'NOG_INVOKED'/g);
+  assert.ok(matches, 'No NOG_INVOKED registerEvent call found');
   assert.strictEqual(matches.length, 1, `Expected 1 emission site, found ${matches.length}`);
 });
 
-test('ROM_WAITING_FOR_NOG event includes round field', () => {
-  const idx = watcherSource.indexOf("'ROM_WAITING_FOR_NOG'");
+test('NOG_INVOKED event includes round field', () => {
+  const idx = watcherSource.indexOf("'NOG_INVOKED'");
   const block = watcherSource.slice(Math.max(0, idx - 200), idx + 300);
-  assert.ok(block.includes('round'), 'ROM_WAITING_FOR_NOG must include round field');
+  assert.ok(block.includes('round'), 'NOG_INVOKED must include round field');
 });
 
-test('ROM_WAITING_FOR_NOG is emitted before Nog invocation', () => {
-  // ROM_WAITING_FOR_NOG should appear in the DONE→EVALUATING block, before invokeNog
-  const waitIdx = watcherSource.indexOf("'ROM_WAITING_FOR_NOG'");
+test('NOG_INVOKED is emitted before Nog invocation', () => {
+  // NOG_INVOKED should appear in the DONE→EVALUATING block, before invokeNog
+  const waitIdx = watcherSource.indexOf("'NOG_INVOKED'");
   const nogIdx = watcherSource.indexOf('invokeNog(doneId)');
-  assert.ok(waitIdx > 0, 'ROM_WAITING_FOR_NOG must exist');
+  assert.ok(waitIdx > 0, 'NOG_INVOKED must exist');
   assert.ok(nogIdx > 0, 'invokeNog call must exist');
-  assert.ok(waitIdx < nogIdx, 'ROM_WAITING_FOR_NOG must be emitted BEFORE invokeNog is called');
+  assert.ok(waitIdx < nogIdx, 'NOG_INVOKED must be emitted BEFORE invokeNog is called');
 });
 
 // ---- Part 4: Return-to-stage ----
@@ -207,7 +207,7 @@ test('ROM_WAITING_FOR_NOG is emitted before Nog invocation', () => {
 test('Watcher source contains RETURN_TO_STAGE event emission', () => {
   assert.ok(
     watcherSource.includes("'RETURN_TO_STAGE'"),
-    'watcher.js must emit RETURN_TO_STAGE register event'
+    'orchestrator.js must emit RETURN_TO_STAGE register event'
   );
 });
 
@@ -218,7 +218,7 @@ test('RETURN_TO_STAGE event includes from_event and reason fields', () => {
   assert.ok(block.includes('reason'), 'RETURN_TO_STAGE must include reason field');
 });
 
-test('Return-to-stage control directory exists reference in watcher', () => {
+test('Return-to-stage control directory exists reference in orchestrator', () => {
   assert.ok(
     watcherSource.includes('control') || watcherSource.includes('CONTROL'),
     'Watcher must reference a control mechanism for return-to-stage'
@@ -228,7 +228,7 @@ test('Return-to-stage control directory exists reference in watcher', () => {
 test('Return-to-stage validates terminal state before acting', () => {
   // The handler function should check for terminal states
   const idx = watcherSource.indexOf('handleReturnToStage');
-  assert.ok(idx > 0, 'handleReturnToStage function must exist in watcher');
+  assert.ok(idx > 0, 'handleReturnToStage function must exist in orchestrator');
   const block = watcherSource.slice(idx, idx + 3000);
   // Should check for terminal file suffixes
   assert.ok(
@@ -277,7 +277,7 @@ test('Return-to-stage control file: happy path simulation', () => {
   // Verify file exists
   assert.ok(fs.existsSync(stuckPath), 'STUCK file should exist before return');
 
-  // Simulate the return: move to staged (what the watcher would do)
+  // Simulate the return: move to staged (what the orchestrator would do)
   const stagedPath = path.join(STAGED, `${sliceId}-STAGED.md`);
   const content = fs.readFileSync(stuckPath, 'utf-8');
   // Update frontmatter status to STAGED
@@ -319,14 +319,14 @@ test('Return-to-stage control file: rejection for IN_PROGRESS', () => {
 
 // ---- Cross-cutting ----
 
-test('No existing register event names are changed', () => {
-  // Verify the existing events still exist unchanged
-  const existingEvents = ['COMMISSIONED', 'ERROR', 'DONE', 'ACCEPTED', 'MERGED',
-    'REVIEWED', 'STUCK', 'NOG_PASS', 'NOG_RETURN', 'NOG_ESCALATION'];
-  for (const evt of existingEvents) {
+test('Canonical register event names exist in orchestrator', () => {
+  // Verify the canonical events are present (post lifecycle-names migration)
+  const canonicalEvents = ['COMMISSIONED', 'ERROR', 'DONE', 'MERGED',
+    'STUCK', 'NOG_DECISION', 'NOG_INVOKED', 'NOG_ESCALATION'];
+  for (const evt of canonicalEvents) {
     assert.ok(
       watcherSource.includes(`'${evt}'`),
-      `Existing event '${evt}' must still be present in watcher.js`
+      `Canonical event '${evt}' must be present in orchestrator.js`
     );
   }
 });

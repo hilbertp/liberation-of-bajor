@@ -3,7 +3,7 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install the Claude CLI globally — this provides the `claude` binary
-# that watcher.js invokes via `claude -p`.
+# that orchestrator.js invokes via `claude -p`.
 RUN npm install -g @anthropic-ai/claude-code
 
 # Copy application source.

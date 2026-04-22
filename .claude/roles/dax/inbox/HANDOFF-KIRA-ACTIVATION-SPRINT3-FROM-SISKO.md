@@ -33,7 +33,7 @@ Currently, Philipp sees an error in the Ops Center dashboard and has to open Cow
 
 - Kira's decision-making value comes from her accumulated context in Cowork — sprint history, role relationships, prior decisions. A solution that throws this away is not acceptable.
 - O'Brien stays in CLI (`claude -p`). Kira stays in Cowork. This is the architectural contract.
-- The relay and watcher (`bridge/watcher.js`) are already running and managing the queue state machine. Any Kira activation mechanism should integrate with or extend this, not replace it.
+- The relay and watcher (`bridge/orchestrator.js`) are already running and managing the queue state machine. Any Kira activation mechanism should integrate with or extend this, not replace it.
 - Cowork is a desktop app (Mac). We don't control its internals.
 
 ---
@@ -73,7 +73,7 @@ Dax's output should be an ADR (Architecture Decision Record) covering:
 
 - Sprint 3 scope: `repo/docs/SPRINT3-SCOPE.md`
 - Sprint roadmap: `sprint-roadmap.html` (in project root)
-- Current watcher: `repo/bridge/watcher.js`
+- Current watcher: `repo/bridge/orchestrator.js`
 - Current queue state machine: documented in FEATURES.md
 - Failed watcher approach: documented in DEBRIEF.md
 

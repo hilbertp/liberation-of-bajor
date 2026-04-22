@@ -37,7 +37,7 @@ You do NOT:
 | Queue directory | `bridge/queue/` |
 | Slice template | `bridge/templates/slice.md` |
 | Report template | `bridge/templates/report.md` |
-| Watcher | `bridge/watcher.js` |
+| Watcher | `bridge/orchestrator.js` |
 | Watcher config | `bridge/bridge.config.json` |
 | Heartbeat | `bridge/heartbeat.json` |
 | Log | `bridge/bridge.log` |

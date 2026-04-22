@@ -34,7 +34,7 @@ Which mechanism actually works within the constraints? Or a combination?
 
 **Q3 — Scope of implementation**
 
-If you recommend building it: which existing files change (skills, ROLE.md files, server.js, watcher.js) and is any new file needed? Keep it minimal — this is a local file queue, not a distributed platform.
+If you recommend building it: which existing files change (skills, ROLE.md files, server.js, orchestrator.js) and is any new file needed? Keep it minimal — this is a local file queue, not a distributed platform.
 
 ---
 

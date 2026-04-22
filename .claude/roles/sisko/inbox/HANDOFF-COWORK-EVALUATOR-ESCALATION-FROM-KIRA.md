@@ -35,7 +35,7 @@ The relay automatically evaluates O'Brien's DONE reports against acceptance crit
 - Leeta's frontend is live at `https://dax-dashboard.lovable.app`
 
 **What the new slice needs to do (at minimum):**
-1. Run inside the relay (`bridge/watcher.js` or a separate process) — NOT in Cowork
+1. Run inside the relay (`bridge/orchestrator.js` or a separate process) — NOT in Cowork
 2. After writing a DONE file, automatically invoke `claude -p` to evaluate it against the original commission's success criteria
 3. Write ACCEPTED or a new PENDING amendment commission based on the verdict
 4. Write a REVIEWED event to `register.jsonl`

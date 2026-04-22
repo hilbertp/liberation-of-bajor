@@ -50,6 +50,6 @@ Estimated human hours: 45 minutes. No new infrastructure. No existing files othe
 
 ## What you don't need to include in the brief
 
-- Any changes to `watcher.js`, `server.js`, or any `ROLE.md`
+- Any changes to `orchestrator.js`, `server.js`, or any `ROLE.md`
 - Blocking behavior — warning only
 - Handling for roles with no outbound history (first session ever) — skip the check if `tt-audit.jsonl` has no entry for this role

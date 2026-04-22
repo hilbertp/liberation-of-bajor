@@ -31,10 +31,10 @@ We were about to build a landing page for open-source promotion. Sisko killed th
 
 ### 1. The relay service
 
-Replace the current bridge (`repo/.bridge/watcher.js` + filesystem polling + cron) with a dockerized service. This is the connective tissue between roles.
+Replace the current bridge (`repo/.bridge/orchestrator.js` + filesystem polling + cron) with a dockerized service. This is the connective tissue between roles.
 
 **Current state (what you're replacing):**
-- `watcher.js` — single Node.js file, polls `.bridge/queue/` for PENDING files, invokes `claude -p`, renames files through state machine (PENDING → IN_PROGRESS → DONE/ERROR)
+- `orchestrator.js` — single Node.js file, polls `.bridge/queue/` for PENDING files, invokes `claude -p`, renames files through state machine (PENDING → IN_PROGRESS → DONE/ERROR)
 - Heartbeat via `heartbeat.json` written every 60s
 - Kira writes commissions from Cowork, reads reports from the same queue directory
 - Communication is purely file-based — `.bridge/queue/` is the only shared state
@@ -91,7 +91,7 @@ Before making any decisions, Dax should read these files:
 | PRD v2 | `PRD — Liberation of Bajor v2.md` (project root) | Product requirements and vision context |
 | PROJECT-VISION.md | `PROJECT-VISION.md` (project root) | The north star — especially the principles about agents keeping their powers and files being source of truth |
 | Session Handoff | `Session Handoff — 2026-04-06 v2.md` (project root) | Where things stood at end of last dev session — git state, pending work, next commission number |
-| Watcher (current) | `repo/.bridge/watcher.js` | The thing you're replacing — understand it before you redesign it |
+| Watcher (current) | `repo/.bridge/orchestrator.js` | The thing you're replacing — understand it before you redesign it |
 | Bridge config | `repo/.bridge/bridge.config.json` | Current watcher configuration |
 | Queue directory | `repo/.bridge/queue/` | Existing commissions and reports — the file-based state machine in action |
 
