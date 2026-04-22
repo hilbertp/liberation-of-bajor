@@ -3677,14 +3677,14 @@
       .sort((a, b) => parseInt(a.id, 10) - parseInt(b.id, 10))
       .map(s => ({ id: s.id, title: s.title, goal: s.goal, sprint: s.sprint, references: s.references, rowState: 'NEEDS_APENDMENT', isApendment: false }));
 
-    // 3. QUEUED/PENDING amendment rows — locked at top of QUEUED group
+    // 3. QUEUED/PENDING apendment rows — locked at top of QUEUED group
     const queuedSlices = cachedBridgeSlices.filter(b => b.state === 'QUEUED' || b.state === 'PENDING');
-    const amendmentRows = queuedSlices
+    const apendmentRows2 = queuedSlices
       .filter(b => isApendment(b))
       .sort((a, b) => new Date(a.created || 0) - new Date(b.created || 0))
       .map(b => ({ ...b, rowState: 'QUEUED', isApendment: true }));
 
-    // 4. QUEUED/PENDING non-amendment rows — ordered by queue order
+    // 4. QUEUED/PENDING non-apendment rows — ordered by queue order
     const normalQueued = queuedSlices.filter(b => !isApendment(b));
     const orderedQueued = [];
     for (const oid of cachedQueueOrder) {
@@ -3715,7 +3715,7 @@
       .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10))
       .map(b => ({ ...b, rowState: 'ERROR', isApendment: false }));
 
-    return [...stagedRows, ...needsAmendRows, ...amendmentRows, ...queuedRows, ...inProgressRows, ...doneRows, ...errorRows];
+    return [...stagedRows, ...needsAmendRows, ...apendmentRows2, ...queuedRows, ...inProgressRows, ...doneRows, ...errorRows];
   }
 
   function buildStagedRows() {
@@ -3806,7 +3806,7 @@
       </div>${goalHtml}</div>`;
     }).join('');
 
-    // Attach drag events to QUEUED non-amendment and STAGED rows
+    // Attach drag events to QUEUED non-apendment and STAGED rows
     setupDragAndDrop();
     // Restore chevron expanded state after re-render
     restoreQueueExpanded();
