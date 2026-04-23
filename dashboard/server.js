@@ -194,6 +194,106 @@ function parseRoundsArray(text) {
   return rounds;
 }
 
+// ── Round-section extractor ──────────────────────────────────────────────────
+// Parses a multi-round slice body for per-round rom_report / nog_review sections.
+function extractRoundSections(body) {
+  const sections = {};
+  const lines = body.split('\n');
+  let key = null;
+  let buf = [];
+  for (const line of lines) {
+    const romM = line.match(/^##\s+Round\s+(\d+)/i);
+    const nogM = line.match(/^##\s+Nog\s+(?:Review|Verdict)[^#\n]*Round\s+(\d+)/i);
+    if (romM) {
+      if (key) sections[key] = buf.join('\n').trim();
+      key = `rom_${romM[1]}`; buf = [];
+    } else if (nogM) {
+      if (key) sections[key] = buf.join('\n').trim();
+      key = `nog_${nogM[1]}`; buf = [];
+    } else if (key) {
+      buf.push(line);
+    }
+  }
+  if (key) sections[key] = buf.join('\n').trim();
+  return sections;
+}
+
+// ── Slice investigation builder ──────────────────────────────────────────────
+// Returns { id, prompt, report, reviews } for a given slice ID.
+// Accepts optional dirs override for testability: { queueDir, stagedDir }.
+function buildSliceInvestigation(id, dirs) {
+  const qDir = (dirs && dirs.queueDir) || QUEUE_DIR;
+  const sDir = (dirs && dirs.stagedDir) || STAGED_DIR;
+  const q = f => path.join(qDir, f);
+  const s = f => path.join(sDir, f);
+
+  // Prompt: earliest available file per precedence
+  const promptFiles = [
+    q(`${id}-IN_PROGRESS.md`), q(`${id}-QUEUED.md`), s(`${id}-STAGED.md`),
+    q(`${id}-PARKED.md`), q(`${id}-STUCK.md`),
+    q(`${id}-DONE.md`), q(`${id}-ERROR.md`), q(`${id}-ACCEPTED.md`),
+  ];
+  let prompt = null;
+  for (const p of promptFiles) {
+    if (fs.existsSync(p)) { prompt = extractBody(fs.readFileSync(p, 'utf8')); break; }
+  }
+
+  // Report: body of terminal file
+  const termFiles = [
+    q(`${id}-DONE.md`), q(`${id}-STUCK.md`), q(`${id}-ERROR.md`), q(`${id}-ACCEPTED.md`),
+  ];
+  let report = null;
+  let termPath = null;
+  for (const p of termFiles) {
+    if (fs.existsSync(p)) { report = extractBody(fs.readFileSync(p, 'utf8')); termPath = p; break; }
+  }
+
+  // Reviews: PARKED or STUCK (multi-round) → rounds[] → per-round entries
+  let reviews = [];
+  const parkedPath = q(`${id}-PARKED.md`);
+  const stuckPath  = q(`${id}-STUCK.md`);
+  const nogPath    = q(`${id}-NOG.md`);
+  const multiPath  = fs.existsSync(parkedPath) ? parkedPath : fs.existsSync(stuckPath) ? stuckPath : null;
+
+  if (multiPath) {
+    const raw = fs.readFileSync(multiPath, 'utf8');
+    const rounds = parseRoundsArray(raw);
+    if (rounds.length > 0) {
+      const secs = extractRoundSections(extractBody(raw));
+      reviews = rounds.map(r => {
+        const rn = typeof r.round === 'number' ? r.round : Number(r.round) || 1;
+        return {
+          round:      rn,
+          verdict:    r.nog_verdict  ?? null,
+          summary:    r.nog_reason   ?? null,
+          rom_report: secs[`rom_${rn}`] || null,
+          nog_review: secs[`nog_${rn}`] || r.nog_reason || null,
+          done_at:    r.done_at      ?? null,
+          durationMs: r.durationMs   ?? null,
+          costUsd:    r.costUsd      ?? null,
+        };
+      });
+    }
+  } else if (fs.existsSync(nogPath)) {
+    const nogRaw = fs.readFileSync(nogPath, 'utf8');
+    const fm = parseFrontmatter(nogRaw);
+    reviews = [{ round: 1, verdict: fm.verdict ?? null, summary: fm.summary ?? null,
+                 rom_report: null, nog_review: extractBody(nogRaw) || null,
+                 done_at: fm.completed ?? null, durationMs: null, costUsd: null }];
+  }
+
+  // 404 if nothing found
+  const allDirs = [qDir, sDir];
+  const found = allDirs.some(d => {
+    try { return fs.readdirSync(d).some(f => f.startsWith(`${id}-`)); } catch (_) { return false; }
+  });
+  if (!found) {
+    const e = new Error(`No slice found for ID ${id}`); e.status = 404; throw e;
+  }
+
+  return { id, prompt, report, reviews };
+}
+
 // ── Register reader ──────────────────────────────────────────────────────────
 // All register reads route through the lifecycle translation shim so legacy
 // event names (NOG_PASS, REVIEW_RECEIVED, ACCEPTED-as-event, etc.) are
@@ -847,6 +947,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Slice investigation: prompt + report + per-round reviews ─────────────
+  const sliceInvMatch = pathname.match(/^\/api\/slice\/(\d+)$/);
+  if (sliceInvMatch && req.method === 'GET') {
+    const id = sliceInvMatch[1];
+    try {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(buildSliceInvestigation(id)));
+    } catch (err) {
+      const status = err.status === 404 ? 404 : 500;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err.message || err) }));
+    }
+    return;
+  }
+
+  // 400 for any /api/slice/* that didn't match a valid route above (non-numeric ID)
+  if (pathname.startsWith('/api/slice/') && req.method === 'GET') {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Slice ID must be numeric' }));
+    return;
+  }
+
   // ── Queue order persistence (drag-reorder) ──────────────────────────────────
   if (pathname === '/api/queue/order' && req.method === 'POST') {
     let body = '';
@@ -910,6 +1032,10 @@ const server = http.createServer(async (req, res) => {
   res.end('Not Found');
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`LCARS dashboard server running at http://${HOST}:${PORT}`);
-});
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    console.log(`LCARS dashboard server running at http://${HOST}:${PORT}`);
+  });
+}
+
+module.exports = { buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections };
