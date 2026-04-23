@@ -2272,36 +2272,6 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
   child.stdin.end();
 }
 
-// ---------------------------------------------------------------------------
-// Evaluator invocation
-// ---------------------------------------------------------------------------
-
-/**
- * countReviewedCycles(rootId)
- *
- * Reads register.jsonl and counts REVIEWED events for a given root slice ID.
- * Returns 0 if the file is unreadable.
- */
-function countReviewedCycles(rootId) {
-  try {
-    const lines = fs.readFileSync(REGISTER_FILE, 'utf-8').trim().split('\n').filter(Boolean);
-    let count = 0;
-    resetDedupeState();
-    for (const line of lines) {
-      try {
-        const raw = JSON.parse(line);
-        const entry = translateEvent(raw);
-        if (entry && entry.event === 'NOG_DECISION' && (entry.id === String(rootId) || entry.root_commission_id === String(rootId))) {
-          count++;
-        }
-      } catch (_) {}
-    }
-    return count;
-  } catch (_) {
-    return 0;
-  }
-}
-
 /**
  * latestRestagedTs(id, regFile)
  *
@@ -2378,284 +2348,6 @@ function hasMergedEvent(id, regFile) {
     }
   } catch (_) {}
   return false;
-}
-
-/**
- * extractJSON(text)
- *
- * Extracts and parses a JSON object from text that may contain preamble
- * and/or markdown code block wrapping. Tries in order:
- * 1. Markdown code block (```json or ```)
- * 2. First '{' to last '}'
- * 3. Raw text as JSON
- */
-function extractJSON(text) {
-  // Try markdown code block with optional json tag.
-  const codeBlockMatch = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-  if (codeBlockMatch) {
-    try { return JSON.parse(codeBlockMatch[1]); } catch (_) {}
-  }
-  // Try first '{' to last '}'.
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start !== -1 && end !== -1 && end > start) {
-    try { return JSON.parse(text.slice(start, end + 1)); } catch (_) {}
-  }
-  // Try raw.
-  try { return JSON.parse(text); } catch (_) {}
-  return null;
-}
-
-/**
- * invokeEvaluator(id)
- *
- * Reads the SLICE and EVALUATING files for the given slice ID,
- * constructs an evaluator prompt, calls claude -p, parses the JSON verdict,
- * and handles ACCEPTED / APENDMENT_NEEDED / STUCK outcomes.
- */
-function invokeEvaluator(id) {
-  const parkedPath  = path.join(QUEUE_DIR, `${id}-PARKED.md`);
-  const legacyParkedPath  = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
-  const evaluatingPath  = path.join(QUEUE_DIR, `${id}-EVALUATING.md`);
-
-  // Read PARKED file (original ACs). Fall back to legacy ARCHIVED for pre-145 slices.
-  let sliceContent;
-  const resolvedParkedPath = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
-  try {
-    sliceContent = fs.readFileSync(resolvedParkedPath, 'utf-8');
-  } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'PARKED file not found — skipping evaluation', error: err.message });
-    // Rename back to DONE so the poll loop can try again later.
-    try { fs.renameSync(evaluatingPath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
-    processing = false;
-    heartbeatState.status = 'idle';
-    heartbeatState.current_slice = null;
-    heartbeatState.current_slice_goal = null;
-    heartbeatState.pickupTime = null;
-    writeHeartbeat();
-    return;
-  }
-
-  // Read EVALUATING file (Rom's DONE report).
-  let evaluatingContent;
-  try {
-    evaluatingContent = fs.readFileSync(evaluatingPath, 'utf-8');
-  } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'EVALUATING file not found — skipping evaluation', error: err.message });
-    processing = false;
-    heartbeatState.status = 'idle';
-    heartbeatState.current_slice = null;
-    heartbeatState.current_slice_goal = null;
-    heartbeatState.pickupTime = null;
-    writeHeartbeat();
-    return;
-  }
-
-  // Extract branch name from Rom's DONE report frontmatter.
-  const doneMeta = parseFrontmatter(evaluatingContent) || {};
-  const branchName = doneMeta.branch || null;
-
-  // Determine root slice ID and apendment cycle.
-  const sliceMeta = parseFrontmatter(sliceContent) || {};
-  const rootId = sliceMeta.root_commission_id || id;
-  const cycle  = countReviewedCycles(rootId);
-
-  log('info', 'evaluator', { id, rootId, cycle, branchName, msg: 'Starting evaluation' });
-  print(`${B.tl}${B.sng.repeat(W - 1)}`);
-  print(`${B.vert}  ${SYM.right} Evaluator${SYM.sep}Slice ${id} (${5 - cycle} retries remaining)`);
-  print(`${B.vert}    Evaluating — fresh claude -p session, slice ACs + DONE report injected`);
-  print(`${B.vert}`);
-
-  // Build scope diff for Nog's review
-  const scopeDiff = branchName ? buildScopeDiff(id, branchName, sliceContent) : '## SCOPE REVIEW — branch name unknown, scope diff unavailable\n';
-
-  const prompt = [
-    'You are Nog, Evaluator for Liberation of Bajor.',
-    '',
-    'Your job has THREE parts:',
-    '',
-    '### Part 1: Acceptance Criteria',
-    'Did Rom\'s work satisfy ALL acceptance criteria in the original slice?',
-    'Be specific. If even one AC is not met, the verdict is APENDMENT_NEEDED.',
-    '',
-    '### Part 2: Intent Verification',
-    'Every slice has a goal — a reason it exists. Read the slice\'s title and goal field.',
-    'Then ask: does the shipped solution actually achieve that intent?',
-    '',
-    'It is possible to tick every AC checkbox while missing the point entirely.',
-    'For example: a slice asks for "pagination so users can browse large result sets".',
-    'Rom could add prev/next buttons that technically satisfy the AC "add pagination',
-    'controls" but wire them to a hardcoded page 1 — the ACs pass, the intent fails.',
-    '',
-    'If the solution does not meaningfully achieve the slice\'s stated goal,',
-    'even if individual ACs are technically met, that is APENDMENT_NEEDED.',
-    'Explain what the gap is between the intent and what was delivered.',
-    '',
-    '### Part 3: Scope Discipline',
-    'Review the list of changed files below against the slice\'s title and goal.',
-    'Ask yourself:',
-    '- Did Rom ONLY change files that are relevant to this slice\'s goal?',
-    '- Were any files modified that have nothing to do with the task?',
-    '- If files outside the expected scope were touched, is there a clear reason',
-    '  (e.g. a shared utility that needed updating, a config change required by the feature)?',
-    '- Did any existing file lose significant content that was NOT related to the task?',
-    '',
-    'Out-of-scope changes are a red flag. If you see them and the DONE report does',
-    'not explain why, that is an APENDMENT_NEEDED — the fix instruction should be',
-    '"revert changes to [file] that are outside the scope of this slice."',
-    '',
-    '## ORIGINAL SLICE (contains the acceptance criteria):',
-    '',
-    sliceContent,
-    '',
-    '## ROM\'S DONE REPORT:',
-    '',
-    evaluatingContent,
-    '',
-    scopeDiff,
-    '',
-    `## APENDMENT CYCLE: ${cycle} of 5`,
-    '',
-    `## BRANCH: ${branchName || '(unknown — read from DONE report above)'}`,
-    '',
-    'Respond with ONLY valid JSON, no other text:',
-    '{',
-    '  "verdict": "ACCEPTED" or "APENDMENT_NEEDED",',
-    '  "reason": "One paragraph explaining your decision. Cover all three parts: ACs, intent, and scope.",',
-    '  "failed_criteria": ["list of specific ACs not met, empty if all pass"],',
-    '  "intent_met": true or false,',
-    '  "intent_gap": "If intent_met is false: what the slice intended vs what was actually delivered. If true: empty string.",',
-    '  "out_of_scope": ["list of files changed outside the slice\'s scope, empty if clean"],',
-    '  "apendment_instructions": "If APENDMENT_NEEDED: specific instructions for Rom. Cover failed ACs, intent gaps, and out-of-scope reversions. Reference file paths. If ACCEPTED: empty string."',
-    '}',
-  ].join('\n');
-
-  const pickupTime = Date.now();
-
-  // ── Resolve worktree for Nog ──────────────────────────────────────────
-  // Nog needs to see the feature branch's code, not main.
-  // Try the original slice's worktree first, then recreate if needed.
-  let evalWorktreePath = getWorktreePath(id);
-  if (!fs.existsSync(evalWorktreePath) && branchName) {
-    // Worktree was cleaned up — recreate from the slice branch
-    try {
-      evalWorktreePath = createWorktree(id, branchName);
-      log('info', 'evaluator', { id, msg: `Recreated worktree for evaluation at ${evalWorktreePath}` });
-    } catch (wtErr) {
-      log('warn', 'evaluator', { id, msg: 'Could not create worktree for evaluation — falling back to PROJECT_DIR', error: wtErr.message });
-      evalWorktreePath = PROJECT_DIR;
-    }
-  } else if (!fs.existsSync(evalWorktreePath)) {
-    evalWorktreePath = PROJECT_DIR;
-  }
-  // ──────────────────────────────────────────────────────────────────────
-
-  // Write nog-active.json so the dashboard can show Nog's live state.
-  try {
-    fs.writeFileSync(NOG_ACTIVE_FILE, JSON.stringify({
-      sliceId: String(id),
-      title: sliceMeta.title || null,
-      round: cycle + 1,
-      invokedAt: new Date().toISOString(),
-    }), 'utf8');
-  } catch (_) {}
-
-  // Progress tick every 60s.
-  const tickInterval = setInterval(() => {
-    printProgressTick(Date.now() - pickupTime);
-  }, 60000);
-
-  const child = execFile(
-    config.claudeCommand,
-    config.claudeArgs,
-    {
-      cwd: evalWorktreePath,
-      encoding: 'utf-8',
-      timeout: config.timeoutMs,
-      maxBuffer: 10 * 1024 * 1024,
-    },
-    (err, stdout, stderr) => {
-      clearInterval(tickInterval);
-      // Clean up nog-active.json — Nog is done.
-      try { fs.renameSync(NOG_ACTIVE_FILE, path.join(TRASH_DIR, 'nog-active.json.done')); } catch (_) {}
-      const durationMs = Date.now() - pickupTime;
-
-      let verdict = null;
-      let reason = '';
-      let failedCriteria = [];
-      let apendmentInstructions = '';
-
-      if (!err) {
-        // Parse the evaluator's JSON response.
-        // Claude may return: (a) JSON output wrapper with result field,
-        // (b) preamble text + markdown code block, or (c) raw JSON.
-        try {
-          let rawText = stdout.trim();
-          // Try to unwrap claude -p --output-format json envelope first.
-          try {
-            const claudeOutput = JSON.parse(rawText);
-            rawText = claudeOutput.result || claudeOutput.content || rawText;
-          } catch (_) {
-            // Not a JSON envelope — rawText is the direct response.
-          }
-          const parsed = extractJSON(rawText);
-          if (parsed) {
-            verdict = parsed.verdict;
-            reason = parsed.reason || '';
-            failedCriteria = parsed.failed_criteria || [];
-            apendmentInstructions = parsed.amendment_instructions || parsed.apendment_instructions || '';
-          }
-        } catch (parseErr) {
-          log('warn', 'evaluator', { id, msg: 'Failed to parse evaluator JSON response', error: parseErr.message, stdout: stdout.slice(0, 500) });
-        }
-      } else {
-        log('error', 'evaluator', { id, msg: 'claude -p evaluator failed', error: err.message, durationMs });
-      }
-
-      // Accept both AMENDMENT_NEEDED (legacy) and APENDMENT_NEEDED (new).
-      if (verdict === 'AMENDMENT_NEEDED') verdict = 'APENDMENT_NEEDED';
-      if (!verdict || !['ACCEPTED', 'APENDMENT_NEEDED'].includes(verdict)) {
-        // Fallback: rename EVALUATING back to DONE for re-evaluation.
-        log('warn', 'evaluator', { id, msg: 'No valid verdict — requeueing for re-evaluation', verdict });
-        try { fs.renameSync(evaluatingPath, path.join(QUEUE_DIR, `${id}-DONE.md`)); } catch (_) {}
-        print(`${B.vert}    ${C.yellow}${SYM.back}${C.reset} Evaluation failed${SYM.sep}re-queued for retry`);
-        print(`${B.bl}${B.sng.repeat(W - 1)}`);
-        print('');
-        processing = false;
-        heartbeatState.status = 'idle';
-        heartbeatState.current_slice = null;
-        heartbeatState.current_slice_goal = null;
-        heartbeatState.pickupTime = null;
-        heartbeatState.processed_total += 1;
-        writeHeartbeat();
-        return;
-      }
-
-      // Determine if STUCK: cycle >= 5 and apendment needed.
-      const isStuck = verdict === 'APENDMENT_NEEDED' && cycle >= 5;
-      const finalVerdict = isStuck ? 'STUCK' : verdict;
-
-      if (finalVerdict === 'ACCEPTED') {
-        handleAccepted(id, reason, cycle + 1, branchName, evaluatingPath, durationMs);
-      } else if (finalVerdict === 'APENDMENT_NEEDED') {
-        handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs);
-      } else {
-        handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs);
-      }
-
-      // Reset processing state.
-      processing = false;
-      heartbeatState.status = 'idle';
-      heartbeatState.current_slice = null;
-      heartbeatState.current_slice_goal = null;
-      heartbeatState.pickupTime = null;
-      heartbeatState.processed_total += 1;
-      writeHeartbeat();
-    }
-  );
-
-  child.stdin.write(prompt);
-  child.stdin.end();
 }
 
 /**
@@ -2815,120 +2507,6 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
     printMergeFailedAlert(id, title, branchName, result.error);
   }
 
-  print(`${B.bl}${B.sng.repeat(W - 1)}`);
-  print('');
-}
-
-/**
- * handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions,
- *                 cycle, branchName, evaluatingPath, sliceContent, durationMs)
- *
- * APENDMENT_NEEDED verdict: register event, rewrite slice file in-place as QUEUED.
- * The slice keeps its original ID — no new slice is created.
- */
-function handleApendment(id, rootId, reason, failedCriteria, apendmentInstructions, cycle, branchName, evaluatingPath, sliceContent, durationMs) {
-  // Canonical: NOG_DECISION (verdict: REJECTED)
-  registerEvent(id, 'NOG_DECISION', { verdict: 'REJECTED', reason, failed_criteria: failedCriteria, cycle: cycle + 1, round: cycle + 1, apendment_cycle: cycle + 1 });
-  log('info', 'evaluator', { id, verdict: 'REJECTED', cycle: cycle + 1, rootId, durationMs });
-
-  // Read the PARKED file for in-place rewrite.
-  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
-  const legacyParkedPath = path.join(QUEUE_DIR, `${id}-ARCHIVED.md`);
-  const resolvedParked = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
-  let parkedContent;
-  try {
-    parkedContent = fs.readFileSync(resolvedParked, 'utf-8');
-  } catch (_) {
-    parkedContent = sliceContent;
-  }
-
-  // Update frontmatter: set status=QUEUED, round, apendment_cycle, apendment, branch.
-  const effectiveBranch = branchName || `slice/${rootId}`;
-  let updatedContent = updateFrontmatter(parkedContent, {
-    status: 'QUEUED',
-    round: String(cycle + 1),
-    apendment_cycle: String(cycle + 1),
-    apendment: effectiveBranch,
-    branch: effectiveBranch,
-  });
-
-  // Append the apendment round section.
-  const failedList = (failedCriteria || []).map((c, i) => `${i + 1}. ${c}`).join('\n');
-  updatedContent += [
-    '',
-    `## Apendment round ${cycle + 1}`,
-    '',
-    `This is an apendment to slice ${rootId} (cycle ${cycle + 1} of 5).`,
-    '',
-    '**IMPORTANT: The orchestrator handles all git branching. Do NOT run any git checkout, git branch, or git switch commands. You are already on the correct branch. Just make your changes and commit.**',
-    '',
-    '### Failed criteria',
-    '',
-    failedList || '(see apendment instructions below)',
-    '',
-    '### Apendment instructions',
-    '',
-    apendmentInstructions || '(see failed criteria above)',
-    '',
-    '### Success criteria',
-    '',
-    '1. All failed criteria listed above are resolved.',
-    `2. All original acceptance criteria from slice ${rootId} are met.`,
-    '3. DONE report includes branch name in frontmatter.',
-    '',
-  ].join('\n');
-
-  // Write updated content back to QUEUED file (same ID).
-  const queuedPath = path.join(QUEUE_DIR, `${id}-QUEUED.md`);
-  try {
-    fs.writeFileSync(queuedPath, updatedContent);
-    log('info', 'evaluator', { id, msg: `Rewrote slice ${id} as ${id}-QUEUED.md (apendment cycle ${cycle + 1})`, cycle: cycle + 1, rootId });
-  } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'Failed to write apendment QUEUED', error: err.message });
-  }
-
-  // Remove the EVALUATING file.
-  try { fs.unlinkSync(evaluatingPath); } catch (_) {}
-
-  print(`${B.vert}    ${C.yellow}${SYM.cross}${C.reset} APENDMENT_NEEDED (cycle ${cycle + 1})${SYM.sep}Slice ${id} re-queued`);
-  print(`${B.bl}${B.sng.repeat(W - 1)}`);
-  print('');
-}
-
-/**
- * handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs)
- *
- * STUCK verdict: register event, rename EVALUATING → STUCK, no new QUEUED.
- */
-function handleStuck(id, reason, cycle, branchName, evaluatingPath, durationMs) {
-  // Canonical: STUCK (terminal state)
-  registerEvent(id, 'STUCK', { reason, cycle, branch: branchName });
-  log('warn', 'evaluator', { id, verdict: 'STUCK', cycle, durationMs });
-
-  // timesheet write point 2 — update orchestrator row at terminal state
-  updateTimesheet(id, { result: 'STUCK', cycle, ts_result: new Date().toISOString() });
-
-  const stuckPath = path.join(QUEUE_DIR, `${id}-STUCK.md`);
-  try {
-    fs.renameSync(evaluatingPath, stuckPath);
-    log('info', 'state', { id, from: 'EVALUATING', to: 'STUCK' });
-  } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'Failed to rename EVALUATING to STUCK', error: err.message });
-  }
-
-  appendKiraEvent({
-    event: 'STUCK',
-    slice_id: id,
-    root_id: null,
-    cycle: cycle || null,
-    branch: branchName || null,
-    details: `Slice ${id} stuck after ${cycle} cycles`,
-  });
-
-  // Clean up the worktree — STUCK is a terminal state (5th rejection / back to O'Brien)
-  try { cleanupWorktree(id, branchName); } catch (_) {}
-
-  print(`${B.vert}    ${C.red}${SYM.cross}${C.reset} STUCK${SYM.sep}Slice ${id} hit apendment cap (${cycle} cycles). Manual intervention required.`);
   print(`${B.bl}${B.sng.repeat(W - 1)}`);
   print('');
 }
@@ -3125,6 +2703,9 @@ function invokeNog(id) {
     nogWorktreePath = PROJECT_DIR;
   }
 
+  // Build scope diff (same as evaluator used to do — now part of the single Nog pass).
+  const scopeDiff = branchName ? buildScopeDiff(id, branchName, sliceContent) : '## SCOPE REVIEW — branch name unknown, scope diff unavailable\n';
+
   // Build prompt.
   const prompt = buildNogPrompt({
     id,
@@ -3132,6 +2713,7 @@ function invokeNog(id) {
     sliceFileContents: sliceContent,
     doneReportContents,
     gitDiff,
+    scopeDiff,
     slicePath: resolvedParkedPath,
   });
 
@@ -3339,9 +2921,8 @@ function invokeNog(id) {
 
       if (verdict === 'ACCEPTED') {
         log('info', 'nog', { id, verdict: 'ACCEPTED', round, durationMs, summary });
-        registerEvent(id, 'NOG_DECISION', { round, verdict: 'ACCEPTED', reason: summary || '' });
 
-        // Append round entry to PARKED file.
+        // Append round entry to PARKED file (telemetry).
         const romTelemetry = extractRomTelemetry(doneReportContents);
         appendRoundEntry(resolvedParkedPath, {
           round,
@@ -3355,25 +2936,16 @@ function invokeNog(id) {
           nog_reason: summary || '',
         });
 
-        // Rename EVALUATING back to DONE so the existing evaluator picks it up.
-        try {
-          fs.renameSync(donePath, path.join(QUEUE_DIR, `${id}-DONE.md`));
-          log('info', 'state', { id, from: 'EVALUATING', to: 'DONE', reason: 'nog_pass' });
-        } catch (renameErr) {
-          log('warn', 'nog', { id, msg: 'Failed to rename back to DONE after PASS', error: renameErr.message });
-        }
-
         // Clean up NOG.md verdict file.
         try { fs.renameSync(nogVerdictPath, path.join(TRASH_DIR, `${id}-NOG.md.pass`)); } catch (_) {}
 
         print(`${B.vert}    ${C.green}${SYM.check}${C.reset} Nog PASS${SYM.sep}Round ${round}${summary ? SYM.dash + summary : ''}`);
-        print(`${B.vert}    Proceeding to evaluator`);
         print(`${B.bl}${B.sng.repeat(W - 1)}`);
         print('');
 
-        // Now invoke the existing evaluator.
-        // Re-claim the DONE file — the evaluator expects to rename DONE → EVALUATING.
-        // We'll let the next poll cycle pick it up naturally.
+        // Single-pass: Nog ACCEPTED → merge directly (no second evaluator call).
+        handleAccepted(id, summary || '', round, branchName, donePath, durationMs);
+
         processing = false;
         heartbeatState.status = 'idle';
         heartbeatState.current_slice = null;
@@ -3504,31 +3076,6 @@ function handleNogReturn(id, rootId, round, branchName, evaluatingPath, sliceCon
 
   // Remove the EVALUATING file (the old DONE renamed by poll loop).
   try { fs.unlinkSync(evaluatingPath); } catch (_) {}
-}
-
-/**
- * hasNogReviewEvent(id)
- *
- * Returns true if register.jsonl contains a NOG_DECISION or NOG_ESCALATION event
- * for this slice ID — meaning Nog has already reviewed it.
- */
-function hasNogReviewEvent(id, regFile) {
-  const file = regFile || REGISTER_FILE;
-  try {
-    const cutoff = latestRestagedTs(id, file);
-    const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
-    resetDedupeState();
-    for (const line of lines) {
-      try {
-        const raw = JSON.parse(line);
-        const entry = translateEvent(raw);
-        if (entry && entry.id === String(id) && ['NOG_DECISION', 'NOG_ESCALATION'].includes(entry.event)) {
-          if (!cutoff || entry.ts > cutoff) return true;
-        }
-      } catch (_) {}
-    }
-  } catch (_) {}
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -4184,27 +3731,19 @@ function poll() {
     heartbeatState.current_slice_goal = sliceMeta.goal || null;
     heartbeatState.pickupTime = Date.now();
 
-    // Route: Nog code review first, then evaluator.
-    // If Nog has already passed this slice, go straight to evaluator.
-    if (hasNogReviewEvent(doneId)) {
-      heartbeatState.status = 'evaluating';
-      writeHeartbeat();
-      invokeEvaluator(doneId);
-    } else {
-      // Emit NOG_INVOKED: Rom is idle-blocked while Nog reviews.
-      const resolvedParked = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
-      let waitRound = 1;
-      try {
-        const parkedContent = fs.readFileSync(resolvedParked, 'utf-8');
-        const nogRounds = (parkedContent.match(/^## Nog Review — Round \d+/gm) || []).length;
-        waitRound = nogRounds + 1;
-      } catch (_) {}
-      registerEvent(doneId, 'NOG_INVOKED', { round: waitRound });
+    // Route: single Nog pass covers code review + ACs + intent + scope.
+    const resolvedParked = fs.existsSync(parkedPath) ? parkedPath : legacyParkedPath;
+    let waitRound = 1;
+    try {
+      const parkedContent = fs.readFileSync(resolvedParked, 'utf-8');
+      const nogRounds = (parkedContent.match(/^## Nog Review — Round \d+/gm) || []).length;
+      waitRound = nogRounds + 1;
+    } catch (_) {}
+    registerEvent(doneId, 'NOG_INVOKED', { round: waitRound });
 
-      heartbeatState.status = 'nog_review';
-      writeHeartbeat();
-      invokeNog(doneId);
-    }
+    heartbeatState.status = 'nog_review';
+    writeHeartbeat();
+    invokeNog(doneId);
     return;
   }
 
