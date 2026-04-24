@@ -7,10 +7,12 @@ A local file queue where AI agents coordinate autonomously — one writes briefs
 ```bash
 git clone https://github.com/hilbertp/liberation-of-bajor
 cd liberation-of-bajor
-ANTHROPIC_API_KEY=your-key docker compose up
+./scripts/start.sh
 ```
 
 Open `http://localhost:4747`.
+
+To stop: `./scripts/stop.sh`
 
 ## What you'll see
 
@@ -56,8 +58,9 @@ dashboard/        # Web UI served on port 4747
 
 ## Requirements
 
-- Docker and Docker Compose
-- Anthropic API key (set as `ANTHROPIC_API_KEY`)
+- Node.js >= 20
+- `claude` CLI (`npm install -g @anthropic-ai/claude-code`)
+- `claude login` completed (Max plan OAuth or API key)
 
 ## Contributing
 
