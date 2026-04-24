@@ -3768,7 +3768,7 @@
         detDot.className = 'service-dot down';
         detLabel.textContent = 'Detector down';
         lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> detector not reporting`);
-        lines.push(`<span class="health-tooltip-detail">install launchd agent per scripts/README-health-detector.md</span>`);
+        lines.push(`<span class="health-tooltip-detail">install launchd agent per scripts/com.liberation-of-bajor.health.plist</span>`);
       } else {
         const age = hh.last_checked
           ? Math.round((Date.now() - new Date(hh.last_checked).getTime()) / 1000)
@@ -3778,10 +3778,10 @@
           detLabel.textContent = 'Detector down';
           lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> detector silent · ${fmtAge(age)}`);
           lines.push(`<span class="health-tooltip-detail">${age}s since last check</span>`);
-        } else if (hh.container_status !== 'running') {
+        } else if (hh.orchestrator_status !== 'running') {
           detDot.className = 'service-dot down';
           detLabel.textContent = 'Detector down';
-          lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> container ${esc(hh.container_status)} · ${fmtAge(age)}`);
+          lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> orchestrator ${esc(hh.orchestrator_status)} · ${fmtAge(age)}`);
         } else if (hh.api_status !== 'ok') {
           detDot.className = 'service-dot down';
           detLabel.textContent = 'Detector down';
@@ -3791,7 +3791,7 @@
           detDot.className = 'service-dot up';
           detLabel.textContent = 'Detector up';
           lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot up"></span> up · ${fmtAge(age)}`);
-          lines.push(`<span class="health-tooltip-detail">container running · API ok</span>`);
+          lines.push(`<span class="health-tooltip-detail">orchestrator running · API ok</span>`);
         }
       }
       detTip.innerHTML = lines.join('\n');
@@ -4149,7 +4149,7 @@
     const s = sliceDetailState;
 
     if (s.context === 'staged') {
-      const approveDisabled = serviceHealthDown ? ' disabled title="Orchestrator/Server down — start Docker + watcher before approving."' : '';
+      const approveDisabled = serviceHealthDown ? ' disabled title="Orchestrator/Server down — run ./scripts/start.sh before approving."' : '';
       container.innerHTML = `
         <button class="slice-action-btn slice-action-approve" onclick="sliceDetailApprove()"${approveDisabled}>Approve</button>
         <button class="slice-action-btn slice-action-refine" onclick="sliceDetailRefine()">Refine</button>
