@@ -1181,23 +1181,32 @@ function ensureMainIsFresh(id) {
   // Check if local has commits not on origin (diverged)
   const ahead = gitFinalizer.runGit('git log origin/main..main --oneline', { slice_id: id, op: 'ensureMainIsFresh_ahead', encoding: 'utf-8' }).trim();
 
-  if (ahead) {
-    // Diverged — discard local-only commits and hard-reset to origin
-    const aheadList = ahead.split('\n').map(l => l.trim()).filter(Boolean);
-    log('warn', 'git_safety', {
-      id,
-      msg: `main has diverged from origin (${aheadList.length} local-only commit(s)) — hard-resetting to origin/main`,
-      discarded: aheadList,
-    });
-    gitFinalizer.runGit('git reset --hard origin/main', { slice_id: id, op: 'ensureMainIsFresh_reset', execOpts: { stdio: 'pipe' } });
-    const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyReset', encoding: 'utf-8' }).trim();
-    log('info', 'git_safety', { id, msg: `Hard-reset complete: main now at ${after.slice(0, 8)}` });
-    selfRestart(`main was diverged and has been hard-reset to origin/main at ${after.slice(0, 8)}`);
-  } else {
-    // Local is behind origin — safe fast-forward
-    gitFinalizer.runGit('git merge --ff-only origin/main', { slice_id: id, op: 'ensureMainIsFresh_ff', execOpts: { stdio: 'pipe' } });
-    const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyFF', encoding: 'utf-8' }).trim();
-    log('info', 'git_safety', { id, msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}` });
+  // ── Layer 2 enforcement: unlock source paths before git mutations, re-lock after ──
+  const unlockScript = path.join(PROJECT_DIR, 'scripts', 'unlock-main.sh');
+  const lockScript   = path.join(PROJECT_DIR, 'scripts', 'lock-main.sh');
+  try { execSync(`bash "${unlockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+
+  try {
+    if (ahead) {
+      // Diverged — discard local-only commits and hard-reset to origin
+      const aheadList = ahead.split('\n').map(l => l.trim()).filter(Boolean);
+      log('warn', 'git_safety', {
+        id,
+        msg: `main has diverged from origin (${aheadList.length} local-only commit(s)) — hard-resetting to origin/main`,
+        discarded: aheadList,
+      });
+      gitFinalizer.runGit('git reset --hard origin/main', { slice_id: id, op: 'ensureMainIsFresh_reset', execOpts: { stdio: 'pipe' } });
+      const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyReset', encoding: 'utf-8' }).trim();
+      log('info', 'git_safety', { id, msg: `Hard-reset complete: main now at ${after.slice(0, 8)}` });
+      selfRestart(`main was diverged and has been hard-reset to origin/main at ${after.slice(0, 8)}`);
+    } else {
+      // Local is behind origin — safe fast-forward
+      gitFinalizer.runGit('git merge --ff-only origin/main', { slice_id: id, op: 'ensureMainIsFresh_ff', execOpts: { stdio: 'pipe' } });
+      const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyFF', encoding: 'utf-8' }).trim();
+      log('info', 'git_safety', { id, msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}` });
+    }
+  } finally {
+    try { execSync(`bash "${lockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
   }
 }
 
