@@ -243,9 +243,8 @@ function buildSliceInvestigation(id, dirs) {
     q(`${id}-DONE.md`), q(`${id}-STUCK.md`), q(`${id}-ERROR.md`), q(`${id}-ACCEPTED.md`),
   ];
   let report = null;
-  let termPath = null;
   for (const p of termFiles) {
-    if (fs.existsSync(p)) { report = extractBody(fs.readFileSync(p, 'utf8')); termPath = p; break; }
+    if (fs.existsSync(p)) { report = extractBody(fs.readFileSync(p, 'utf8')); break; }
   }
 
   // Reviews: PARKED or STUCK (multi-round) → rounds[] → per-round entries
