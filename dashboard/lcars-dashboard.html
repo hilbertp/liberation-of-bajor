@@ -3775,9 +3775,12 @@
       .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10))
       .map(b => ({ ...b, rowState: 'IN_PROGRESS', isApendment: false }));
 
-    // 6. DONE rows (desc ID)
+    // 6. DONE rows (desc ID) — defensive: exclude MERGED slices even if backend leaks them
+    const mergedIds = new Set(
+      (cachedRegisterEvents || []).filter(e => e.event === 'MERGED').map(e => String(e.id))
+    );
     const doneRows = cachedBridgeSlices
-      .filter(b => b.state === 'DONE')
+      .filter(b => b.state === 'DONE' && !mergedIds.has(String(b.id)))
       .sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10))
       .map(b => ({ ...b, rowState: 'DONE', isApendment: false }));
 
