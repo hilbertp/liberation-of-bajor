@@ -3851,10 +3851,7 @@ function poll() {
   //   - Remove the QUEUED/PENDING file so the poll loop doesn't re-process it forever
   //   - Continue the poll loop (do not crash)
   // ---------------------------------------------------------------------------
-  const REQUIRED_FIELDS = ['id', 'title', 'from', 'to', 'priority', 'created'];
-  const missingFields = REQUIRED_FIELDS.filter(
-    field => !meta || !meta[field] || meta[field].trim() === ''
-  );
+  const { missingFields } = validateIntakeMeta(meta);
 
   if (missingFields.length > 0) {
     const errId   = (meta && meta.id) || id;
@@ -4282,7 +4279,33 @@ if (require.main === module) {
 }
 
 // ---------------------------------------------------------------------------
+// validateIntakeMeta — intake field validation for the poll loop
+//
+// Amendment/rework files carry rounds[], round>1, or apendment/amendment/
+// references signals and only need 4 fields (id, title, from, to); the
+// priority + created pair was captured in the original COMMISSIONED event.
+// ---------------------------------------------------------------------------
+
+function validateIntakeMeta(meta) {
+  const isApendmentFile = !!(meta && (
+    meta.type === 'amendment' ||
+    meta.apendment ||
+    meta.amendment ||
+    (meta.references && meta.references !== 'null') ||
+    (parseInt(meta.round, 10) > 1) ||
+    (Array.isArray(meta.rounds) && meta.rounds.length > 0)
+  ));
+  const REQUIRED_FIELDS = isApendmentFile
+    ? ['id', 'title', 'from', 'to']
+    : ['id', 'title', 'from', 'to', 'priority', 'created'];
+  const missingFields = REQUIRED_FIELDS.filter(
+    field => !meta || !meta[field] || meta[field].trim() === ''
+  );
+  return { ok: missingFields.length === 0, missingFields };
+}
+
+// ---------------------------------------------------------------------------
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap };
+module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, validateIntakeMeta };
