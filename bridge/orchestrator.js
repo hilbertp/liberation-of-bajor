@@ -4281,9 +4281,9 @@ if (require.main === module) {
 // ---------------------------------------------------------------------------
 // validateIntakeMeta — intake field validation for the poll loop
 //
-// Amendment/rework files carry rounds[], round>1, or apendment/amendment/
-// references signals and only need 4 fields (id, title, from, to); the
-// priority + created pair was captured in the original COMMISSIONED event.
+// Rework/apendment files carry rounds[], round>1, or apendment/references
+// signals and only need 4 fields (id, title, from, to); the priority +
+// created pair was captured in the original COMMISSIONED event.
 // ---------------------------------------------------------------------------
 
 function validateIntakeMeta(meta) {
