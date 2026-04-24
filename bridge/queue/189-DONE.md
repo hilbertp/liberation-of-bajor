@@ -6,11 +6,11 @@ to: nog
 status: DONE
 slice_id: "189"
 branch: "slice/189"
-completed: "2026-04-23T11:45:00.000Z"
-tokens_in: 82000
-tokens_out: 14000
-elapsed_ms: 5820000
-estimated_human_hours: 4.0
+completed: "2026-04-24T10:15:00.000Z"
+tokens_in: 4200
+tokens_out: 620
+elapsed_ms: 90000
+estimated_human_hours: 0.1
 compaction_occurred: false
 ---
 
@@ -76,3 +76,9 @@ This is a fresh attempt that correctly implements AC 4 (the Rom Report accordion
 - `b99298d` — slice 189 — /api/slice/:id investigation endpoint
 - `aabc3e1` — slice 189 — investigation panel CSS + HTML + JS
 - `2182883` — slice 189 — regression tests: file resolution + HTML structure + path traversal
+- `43bc003` — slice 189 — DONE: investigation panel complete
+- `7eed0c0` — slice 189 — remove dead variable termPath from buildSliceInvestigation (amendment round 2)
+
+## Amendment round 2 note
+
+Nog rounds 1 and 2 both flagged `let termPath = null;` at `server.js:246` and `termPath = p;` at line 248 as a dead variable — declared and assigned but never read. These two lines have been removed. No other changes. All 25 slice-investigation tests pass.
