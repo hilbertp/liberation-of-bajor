@@ -1198,6 +1198,8 @@ function ensureMainIsFresh(id) {
       gitFinalizer.runGit('git reset --hard origin/main', { slice_id: id, op: 'ensureMainIsFresh_reset', execOpts: { stdio: 'pipe' } });
       const after = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'ensureMainIsFresh_verifyReset', encoding: 'utf-8' }).trim();
       log('info', 'git_safety', { id, msg: `Hard-reset complete: main now at ${after.slice(0, 8)}` });
+      // process.exit(0) inside selfRestart() bypasses finally — relock explicitly here.
+      try { execSync(`bash "${lockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
       selfRestart(`main was diverged and has been hard-reset to origin/main at ${after.slice(0, 8)}`);
     } else {
       // Local is behind origin — safe fast-forward

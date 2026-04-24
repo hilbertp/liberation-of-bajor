@@ -89,7 +89,7 @@ is_locked_path() {
   # Normalise: strip leading ./
   f="${f#./}"
   case "$f" in
-    dashboard|dashboard/*|dashboard/*)  return 0 ;;
+    dashboard|dashboard/*)              return 0 ;;
     docs/contracts|docs/contracts/*)    return 0 ;;
     bridge/*.js)                        return 0 ;;
     package.json|README.md|CLAUDE.md)   return 0 ;;

@@ -43,18 +43,6 @@ function test(name, fn) {
   }
 }
 
-async function testAsync(name, fn) {
-  try {
-    await fn();
-    passed++;
-    console.log(`  \u2713 ${name}`);
-  } catch (err) {
-    failed++;
-    console.log(`  \u2717 ${name}`);
-    console.log(`    ${err.message}`);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -132,23 +120,26 @@ test('A: git reset --hard succeeds when unlock wraps the operation', () => {
 // Test B: re-locks even when reset throws (try/finally semantic)
 // ---------------------------------------------------------------------------
 
-test('B: try/finally re-locks even when git reset --hard throws', () => {
+test('B: try/finally re-locks even when git reset --hard throws (JS finally semantics)', () => {
   const dir = makeTempRepo('B');
   const lockFile = path.join(dir, '.lock-state');
   try {
-    // Simulate the try/finally pattern: unlock sets the flag, the git op
-    // throws, the finally block still runs the relock.
-    const script = `
-      set +e
-      echo "unlocked" > "${lockFile}"
-      (
-        # Simulated failing git op
-        exit 1
-      )
-      # finally block always runs
-      echo "locked" > "${lockFile}"
+    // Run an inline Node.js snippet that mirrors ensureMainIsFresh's try/finally
+    // structure. The try body throws; the finally block must still run the relock.
+    // A bash subshell would not exercise JS try/finally — Node must run this.
+    const inlineScript = `
+      const fs = require('fs');
+      const lockFile = ${JSON.stringify(lockFile)};
+      fs.writeFileSync(lockFile, 'unlocked');
+      try {
+        throw new Error('simulated git reset --hard failure');
+      } finally {
+        fs.writeFileSync(lockFile, 'locked');
+      }
     `;
-    spawnSync('bash', ['-c', script], { encoding: 'utf-8' });
+    // Node exits non-zero because the try body throws — that's expected.
+    // The finally block still runs before the process unwinds.
+    spawnSync(process.execPath, ['-e', inlineScript], { encoding: 'utf-8' });
     const state = fs.readFileSync(lockFile, 'utf-8').trim();
     if (state !== 'locked') throw new Error(`Expected locked, got: ${state}`);
   } finally {
