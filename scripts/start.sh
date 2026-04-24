@@ -4,8 +4,8 @@
 # Starts node dashboard/server.js and node bridge/orchestrator.js as background
 # processes, writes PIDs to bridge/.run.pid, and tails startup to stdout.
 #
-# Usage:  ./scripts/start.sh [--repo-root <path>]
-#   Defaults to the repo root (parent of this script's directory).
+# Usage:  ./scripts/start.sh
+#   To override repo root:  REPO_ROOT=/path/to/repo ./scripts/start.sh
 
 set -euo pipefail
 
@@ -44,9 +44,20 @@ fi
 
 PID_FILE="$REPO_ROOT/bridge/.run.pid"
 if [ -f "$PID_FILE" ]; then
-  echo "WARNING: $PID_FILE already exists — a prior run may still be active." >&2
-  echo "         Run ./scripts/stop.sh first, or remove $PID_FILE manually." >&2
-  exit 1
+  any_alive=0
+  while IFS= read -r pid; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      any_alive=1
+      break
+    fi
+  done < "$PID_FILE"
+  if [ "$any_alive" -eq 1 ]; then
+    echo "WARNING: $PID_FILE exists and a recorded process is still running." >&2
+    echo "         Run ./scripts/stop.sh first." >&2
+    exit 1
+  fi
+  # All recorded PIDs are dead — stale file from a prior crash; safe to remove.
+  rm -f "$PID_FILE"
 fi
 
 # ── Launch ────────────────────────────────────────────────────────────────────
