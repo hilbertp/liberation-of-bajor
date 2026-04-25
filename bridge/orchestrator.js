@@ -3273,9 +3273,13 @@ function writeErrorFile(errorPath, id, reason, err, stdout, stderr, extra) {
       ? `The process was killed after ${extra && extra.lastActivitySecondsAgo != null ? extra.lastActivitySecondsAgo : '?'}s of no stdout/stderr output (limit: ${extra && extra.inactivityLimitMinutes != null ? extra.inactivityLimitMinutes : '?'} min).`
       : reason === 'crash'
         ? `The process exited with a non-zero status (exit code ${exitCode ?? 'unknown'}).`
-        : isRomSelfTerminated(reason)
-          ? `The process exited cleanly but wrote no DONE file (${reason}).${extra && extra.rescue_path ? ' Worktree rescued to ' + extra.rescue_path + '.' : ''}`
-          : `Slice frontmatter validation failed. Missing fields: ${(extra && extra.missingFields || []).join(', ')}.`;
+        : reason === 'rom_no_commits'
+          ? `Rom wrote a DONE report but made no commits to slice/${id}. The report is fabricated (likely hit a rate limit or crashed early). ${extra && extra.detail ? extra.detail : ''}`
+          : reason === 'metrics_divergence'
+            ? `Rom's claimed metrics diverged from the actual process metrics by >10×. ${extra && extra.detail ? extra.detail : ''}`
+            : isRomSelfTerminated(reason)
+              ? `The process exited cleanly but wrote no DONE file (${reason}).${extra && extra.rescue_path ? ' Worktree rescued to ' + extra.rescue_path + '.' : ''}`
+              : `Slice frontmatter validation failed. Missing fields: ${(extra && extra.missingFields || []).join(', ')}.`;
 
   const content = [
     ...frontmatter,
@@ -4408,4 +4412,4 @@ function validateIntakeMeta(meta) {
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, validateIntakeMeta, ensureMainIsFresh, _testSetRegisterFile: (p) => { REGISTER_FILE = p; } };
+module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, validateIntakeMeta, ensureMainIsFresh, _testSetRegisterFile: (p) => { REGISTER_FILE = p; } };
