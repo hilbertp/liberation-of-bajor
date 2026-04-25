@@ -2110,7 +2110,6 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
             }
 
             // --- Write Point 1: append timesheet row (Bet 3) ---
-            const sliceMeta = parseFrontmatter(sliceContent) || {};
             const expectedHours = sliceMeta.expected_human_hours && sliceMeta.expected_human_hours !== 'null'
               ? parseFloat(sliceMeta.expected_human_hours)
               : null;
