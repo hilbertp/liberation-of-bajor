@@ -2023,6 +2023,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
                 detail: verify.detail,
                 durationMs,
                 actualTokensOut: tokensOut,
+                stderr_tail: truncStderr(stderr),
               });
               appendKiraEvent({
                 event: 'ERROR',
