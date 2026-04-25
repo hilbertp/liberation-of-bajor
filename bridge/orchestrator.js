@@ -254,6 +254,45 @@ function extractTokenUsage(stdout) {
   }
 }
 
+/**
+ * extractSessionId(stdout)
+ *
+ * Extracts session_id from Claude Code's JSON output.
+ * Returns the session ID string or null if unavailable.
+ */
+function extractSessionId(stdout) {
+  try {
+    const data = JSON.parse(stdout.trim());
+    return typeof data.session_id === 'string' ? data.session_id : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * shouldForceFreshSession(nogRejectionReason)
+ *
+ * Returns true when a Nog rejection indicates substantial rework that should
+ * NOT reuse Rom's prior session (wrong mental model would carry forward).
+ * Triggers: keyword matches OR rejection text > 500 chars.
+ */
+const FRESH_TRIGGERS = [
+  'reconsider approach',
+  'wrong design',
+  'start over',
+  'different approach',
+  'rethink',
+  'architectural',
+  'redesign',
+];
+
+function shouldForceFreshSession(reason) {
+  if (!reason) return false;
+  if (reason.length > 500) return true;
+  const lower = reason.toLowerCase();
+  return FRESH_TRIGGERS.some(t => lower.includes(t));
+}
+
 function computeCost(tokensIn, tokensOut) {
   if (tokensIn == null || tokensOut == null) return null;
   return (tokensIn  * INPUT_COST_PER_M  / 1_000_000)
