@@ -2771,6 +2771,62 @@ function mergeBranch(id, branchName, title) {
 }
 
 // ---------------------------------------------------------------------------
+// acceptAndMerge — sole entry point for ACCEPTED rename + merge
+// ---------------------------------------------------------------------------
+
+/**
+ * acceptAndMerge(id, currentFilePath, branchName, title)
+ *
+ * Ensures {id}-ACCEPTED.md exists in the queue directory, then calls mergeBranch.
+ * This is the SOLE entry point for all merge paths — no caller should invoke
+ * mergeBranch directly.
+ *
+ * Rename logic:
+ *   - If ACCEPTED already exists → no-op (idempotent).
+ *   - If currentFilePath is provided and differs from acceptedPath → rename it.
+ *   - If rename fails → emit RENAME_FAILED, halt (do NOT proceed to merge).
+ *
+ * Returns { success, sha, error } (same shape as mergeBranch).
+ */
+function acceptAndMerge(id, currentFilePath, branchName, title, opts) {
+  const queueDir = (opts && opts.queueDir) || QUEUE_DIR;
+  const acceptedPath = path.join(queueDir, `${id}-ACCEPTED.md`);
+
+  // Idempotent: if ACCEPTED already exists, skip rename (AC4).
+  if (!fs.existsSync(acceptedPath)) {
+    if (!currentFilePath || !fs.existsSync(currentFilePath)) {
+      // No source file to rename — emit RENAME_FAILED and halt (AC3).
+      const detail = {
+        slice_id: String(id),
+        expected_path: acceptedPath,
+        actual_path_if_known: currentFilePath || null,
+        error: currentFilePath ? 'source file does not exist' : 'no source file path provided',
+      };
+      registerEvent(id, 'RENAME_FAILED', detail);
+      log('error', 'state', { id, msg: 'RENAME_FAILED — cannot create ACCEPTED file', detail });
+      return { success: false, sha: null, error: 'rename_failed_no_source' };
+    }
+
+    try {
+      fs.renameSync(currentFilePath, acceptedPath);
+      log('info', 'state', { id, from: path.basename(currentFilePath).replace(/^\d+-/, '').replace('.md', ''), to: 'ACCEPTED' });
+    } catch (err) {
+      const detail = {
+        slice_id: String(id),
+        expected_path: acceptedPath,
+        actual_path_if_known: currentFilePath,
+        error: err.message,
+      };
+      registerEvent(id, 'RENAME_FAILED', detail);
+      log('error', 'state', { id, msg: 'RENAME_FAILED — rename threw', detail });
+      return { success: false, sha: null, error: `rename_failed: ${err.message}` };
+    }
+  }
+
+  return mergeBranch(id, branchName, title);
+}
+
+// ---------------------------------------------------------------------------
 // Post-merge archival — ACCEPTED → ARCHIVED + sibling cleanup
 // ---------------------------------------------------------------------------
 
@@ -2885,14 +2941,6 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
   // timesheet write point 2 — update orchestrator row at terminal state
   updateTimesheet(id, { result: 'ACCEPTED', cycle, ts_result: new Date().toISOString() });
 
-  const acceptedPath = path.join(QUEUE_DIR, `${id}-ACCEPTED.md`);
-  try {
-    fs.renameSync(evaluatingPath, acceptedPath);
-    log('info', 'state', { id, from: 'EVALUATING', to: 'ACCEPTED' });
-  } catch (err) {
-    log('warn', 'evaluator', { id, msg: 'Failed to rename EVALUATING to ACCEPTED', error: err.message });
-  }
-
   // Merge branch to main directly — no separate merge slice.
   if (!branchName) {
     log('warn', 'merge', { id, msg: 'No branch name in DONE report — skipping merge' });
@@ -2902,7 +2950,8 @@ function handleAccepted(id, reason, cycle, branchName, evaluatingPath, durationM
     return;
   }
 
-  const result = mergeBranch(id, branchName, title);
+  // Route through acceptAndMerge — handles EVALUATING→ACCEPTED rename + merge.
+  const result = acceptAndMerge(id, evaluatingPath, branchName, title);
 
   if (result.success) {
     const shortSha = result.sha.slice(0, 7);
@@ -4405,8 +4454,8 @@ function crashRecovery() {
       continue;
     }
 
-    // Re-attempt merge.
-    const result = mergeBranch(id, branchName, title);
+    // Re-attempt merge via acceptAndMerge (ACCEPTED file already exists — idempotent rename).
+    const result = acceptAndMerge(id, acceptedPath, branchName, title);
     if (result.success) {
       registerEvent(id, 'MERGED', { branch: branchName, sha: result.sha, slice_id: id, recovery: true });
       log('info', 'startup_recovery', { id, msg: `Recovery merge succeeded for ${branchName}`, branch: branchName, sha: result.sha });
@@ -4677,6 +4726,98 @@ function backfillArchive(opts) {
 }
 
 // ---------------------------------------------------------------------------
+// backfillAcceptedFiles — one-shot fix for missing ACCEPTED files (slice 216)
+// ---------------------------------------------------------------------------
+
+const BACKFILL_ACCEPTED_MARKER = path.resolve(__dirname, '.backfill-accepted-done');
+
+/**
+ * backfillAcceptedFiles(opts)
+ *
+ * Runs once per install (guarded by BACKFILL_ACCEPTED_MARKER).
+ * Walks bridge/queue/ for slices whose branch is merged on main but lack
+ * -ACCEPTED.md. For each, creates the ACCEPTED file by renaming an existing
+ * -DONE.md or -EVALUATING.md, or writing a stub if neither exists.
+ */
+function backfillAcceptedFiles(opts) {
+  const queueDir   = (opts && opts.queueDir)   || QUEUE_DIR;
+  const markerFile = (opts && opts.markerFile)  || BACKFILL_ACCEPTED_MARKER;
+
+  if (fs.existsSync(markerFile)) return;
+
+  let files;
+  try {
+    files = fs.readdirSync(queueDir);
+  } catch (_) { return; }
+
+  // Find slices that have a -DONE.md but no -ACCEPTED.md.
+  const doneFiles = files.filter(f => /^\d+-DONE\.md$/.test(f));
+  let processed = 0;
+  let skipped = 0;
+
+  for (const doneFile of doneFiles) {
+    const id = doneFile.replace('-DONE.md', '');
+    const acceptedPath = path.join(queueDir, `${id}-ACCEPTED.md`);
+
+    // Already has ACCEPTED — skip.
+    if (fs.existsSync(acceptedPath)) {
+      skipped++;
+      continue;
+    }
+
+    // Read branch name from the DONE file frontmatter.
+    let branchName = `slice/${id}`;
+    try {
+      const content = fs.readFileSync(path.join(queueDir, doneFile), 'utf-8');
+      const meta = parseFrontmatter(content);
+      if (meta && meta.branch) branchName = meta.branch;
+    } catch (_) {}
+
+    // Check if branch is merged on main.
+    let isMerged = false;
+    try {
+      const mergedBranches = gitFinalizer.runGit('git branch --merged main', { slice_id: id, op: 'backfillAccepted_checkMerged', encoding: 'utf-8' });
+      isMerged = mergedBranches.split('\n').some(b => b.trim() === branchName);
+    } catch (_) {}
+
+    // Also check register for MERGED event (branch may have been deleted).
+    if (!isMerged) {
+      try { isMerged = hasMergedEvent(id); } catch (_) {}
+    }
+
+    if (!isMerged) {
+      skipped++;
+      continue;
+    }
+
+    // Create ACCEPTED file: prefer renaming EVALUATING, then copy DONE content.
+    const evaluatingPath = path.join(queueDir, `${id}-EVALUATING.md`);
+    try {
+      if (fs.existsSync(evaluatingPath)) {
+        fs.renameSync(evaluatingPath, acceptedPath);
+      } else {
+        // Write a stub ACCEPTED from DONE content (DONE stays — it's committed on branch).
+        const doneContent = fs.readFileSync(path.join(queueDir, doneFile), 'utf-8');
+        fs.writeFileSync(acceptedPath, doneContent);
+      }
+      processed++;
+      log('info', 'backfill', { id, msg: 'Created missing ACCEPTED file via backfill' });
+    } catch (err) {
+      log('warn', 'backfill', { id, msg: 'Backfill ACCEPTED failed', error: err.message });
+      skipped++;
+    }
+  }
+
+  registerEvent('backfill', 'BACKFILL_ACCEPTED_COMPLETE', { processed, skipped });
+
+  try {
+    fs.writeFileSync(markerFile, new Date().toISOString() + '\n');
+  } catch (err) {
+    log('warn', 'backfill', { msg: 'Failed to write backfill accepted marker', error: err.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Startup — only runs when this file is executed directly (not when required)
 // ---------------------------------------------------------------------------
 
@@ -4708,6 +4849,7 @@ if (require.main === module) {
 
   const recoveryActions = crashRecovery();
   restagedBootstrap();
+  backfillAcceptedFiles();
   backfillArchive();
   printStartupBlock(recoveryActions);
 
@@ -4776,4 +4918,4 @@ function validateIntakeMeta(meta) {
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, backfillArchive, archiveAcceptedSlice, archiveSiblingStateFiles, validateIntakeMeta, ensureMainIsFresh, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, _testSetRegisterFile: (p) => { REGISTER_FILE = p; } };
+module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, backfillArchive, backfillAcceptedFiles, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, validateIntakeMeta, ensureMainIsFresh, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, _testSetRegisterFile: (p) => { REGISTER_FILE = p; } };
