@@ -672,7 +672,7 @@ function updateFrontmatter(text, updates) {
  *
  * Appends a round entry to the slice file's frontmatter `rounds:` YAML array
  * and recomputes slice-level `total_*` fields. The entry is a plain object:
- * { round, commissioned_at, done_at, durationMs, tokensIn, tokensOut, costUsd, nog_verdict, nog_reason }
+ * { round, attempt_number, commissioned_at, done_at, durationMs, tokensIn, tokensOut, costUsd, nog_verdict, nog_reason }
  *
  * Frontmatter `rounds:` is stored as a YAML block sequence inside the --- fences.
  * After appending, total_durationMs/total_tokensIn/total_tokensOut/total_costUsd are recomputed.
@@ -699,8 +699,10 @@ function appendRoundEntry(sliceFilePath, roundEntry) {
   }
 
   // Build the YAML lines for this round entry.
+  const attemptNum = roundEntry.attempt_number != null ? roundEntry.attempt_number : 1;
   const yamlEntry = [
     `  - round: ${roundEntry.round}`,
+    `    attempt_number: ${attemptNum}`,
     `    commissioned_at: "${roundEntry.commissioned_at || ''}"`,
     `    done_at: "${roundEntry.done_at || ''}"`,
     `    durationMs: ${roundEntry.durationMs || 0}`,
