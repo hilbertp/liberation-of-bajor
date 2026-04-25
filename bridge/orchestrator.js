@@ -2703,7 +2703,7 @@ function mergeBranch(id, branchName, title) {
     // This runs on local FS (/tmp), not FUSE. Resolves any main changes
     // since the branch was created.
     const oldMain = gitFinalizer.runGit('git rev-parse main', { slice_id: id, op: 'mergeBranch_oldMain', encoding: 'utf-8' }).trim();
-    gitFinalizer.runGit(`git merge main -m "${commitMsg.replace(/"/g, '\\"')}"`, { slice_id: id, op: 'mergeBranch_merge', cwd: wtPath, execOpts: { stdio: 'pipe' } });
+    gitFinalizer.runGit(`git merge --no-ff main -m "${commitMsg.replace(/"/g, '\\"')}"`, { slice_id: id, op: 'mergeBranch_merge', cwd: wtPath, execOpts: { stdio: 'pipe' } });
 
     // ── Step 2: Fast-forward main to the merge result ──────────────────
     const newSha = gitFinalizer.runGit(`git rev-parse ${branchName}`, { slice_id: id, op: 'mergeBranch_newSha', encoding: 'utf-8' }).trim();
