@@ -310,13 +310,14 @@ function main() {
     // Rename prior git branch
     renameGitBranch(id, attemptN);
 
-    // Inject re-stage notice into body when this is attempt 2+.
-    if (attemptN > 1) {
+    // Inject re-stage notice into body. Any --restage invocation is at least attempt 2.
+    {
+      const newAttempt = attemptN + 1;
       const today = new Date().toISOString().slice(0, 10);
       const notice = [
-        `## Re-stage notice — attempt ${attemptN + 1} (${today})`,
+        `## Re-stage notice — attempt ${newAttempt} (${today})`,
         '',
-        `This is attempt ${attemptN + 1} of slice ${id}. Prior attempt(s) archived to \`bridge/trash/${id}-*-attempt-${attemptN}/\`.`,
+        `This is attempt ${newAttempt} of slice ${id}. Prior attempt(s) archived to \`bridge/trash/${id}-*-attempt-${attemptN}/\`.`,
         `Branches preserved as \`slice/${id}-attempt-${attemptN}\` for reference.`,
         '',
         'See the rounds: array in frontmatter for the per-round telemetry across all attempts.',
