@@ -3923,7 +3923,7 @@ function handleReturnToStage(sliceId) {
   try {
     // Archive terminal file to trash (with return-to-stage suffix for ERROR sidecars).
     if (isErrorSidecar) {
-      const archiveName = `${id}-ERROR.md.return-to-stage-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      const archiveName = `${id}-ERROR.md.return-to-stage-${nowIso.replace(/[:.]/g, '-')}`;
       fs.renameSync(terminalPath, path.join(TRASH_DIR, archiveName));
     }
     fs.writeFileSync(stagedPath, updatedContent);
