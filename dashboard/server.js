@@ -22,6 +22,88 @@ const { translateEvent, resetDedupeState } = require(path.join(REPO_ROOT, 'bridg
 
 const CORS_ORIGIN  = 'https://dax-dashboard.lovable.app';
 
+// ── Mtime-based in-memory cache ─────────────────────────────────────────────
+// Eliminates per-request re-parse of large files (register.jsonl is 27MB+).
+// Each cache entry stores { mtimeMs, value }. On read, stat the file; if mtime
+// is unchanged, return cached value. Otherwise re-parse and update cache.
+const _cache = {};
+
+/**
+ * getCachedFile(filePath, parser)
+ *
+ * Returns the cached parsed result if the file's mtime hasn't changed.
+ * `parser` receives the raw file content (utf-8 string) and returns the parsed value.
+ * Returns null if the file doesn't exist or can't be read.
+ */
+function getCachedFile(filePath, parser) {
+  try {
+    const stat = fs.statSync(filePath);
+    const entry = _cache[filePath];
+    if (entry && entry.mtimeMs === stat.mtimeMs) {
+      return entry.value;
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const value = parser(raw);
+    _cache[filePath] = { mtimeMs: stat.mtimeMs, value };
+    return value;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * getCachedDir(dirPath, fileParser)
+ *
+ * Caches a directory listing + per-file parsed content using mtime checks.
+ * The directory's own mtime invalidates the file list. Per-file mtimes
+ * invalidate individual parsed entries. Returns { files, parsed }.
+ * `fileParser(filePath, content)` returns parsed value per file (or null to skip).
+ */
+function getCachedDir(dirPath, fileFilter, fileParser) {
+  let dirEntry = _cache['dir:' + dirPath];
+  let dirMtimeMs;
+  try {
+    dirMtimeMs = fs.statSync(dirPath).mtimeMs;
+  } catch (_) {
+    return { files: [], parsed: {} };
+  }
+
+  // If dir mtime changed, re-read file list
+  if (!dirEntry || dirEntry.dirMtimeMs !== dirMtimeMs) {
+    let allFiles;
+    try { allFiles = fs.readdirSync(dirPath).filter(fileFilter); }
+    catch (_) { allFiles = []; }
+    dirEntry = { dirMtimeMs, files: allFiles, perFile: dirEntry ? dirEntry.perFile : {} };
+    _cache['dir:' + dirPath] = dirEntry;
+  }
+
+  // Check per-file mtimes
+  const parsed = {};
+  for (const file of dirEntry.files) {
+    const filePath = path.join(dirPath, file);
+    try {
+      const fstat = fs.statSync(filePath);
+      const existing = dirEntry.perFile[file];
+      if (existing && existing.mtimeMs === fstat.mtimeMs) {
+        parsed[file] = existing.value;
+      } else {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        const value = fileParser(filePath, raw);
+        dirEntry.perFile[file] = { mtimeMs: fstat.mtimeMs, value };
+        parsed[file] = value;
+      }
+    } catch (_) {}
+  }
+
+  // Prune stale per-file entries
+  const fileSet = new Set(dirEntry.files);
+  for (const k of Object.keys(dirEntry.perFile)) {
+    if (!fileSet.has(k)) delete dirEntry.perFile[k];
+  }
+
+  return { files: dirEntry.files, parsed };
+}
+
 // Legacy file suffix (pre-D3 backward compat — files may still exist on disk)
 const LEGACY_NEEDS_SUFFIX = '-NEEDS_' + 'AMEND' + 'MENT.md';
 const LEGACY_VERDICT_REQ  = 'AMEND' + 'MENT_REQUIRED';
@@ -299,14 +381,14 @@ function buildSliceInvestigation(id, dirs) {
 // event names (NOG_PASS, REVIEW_RECEIVED, ACCEPTED-as-event, etc.) are
 // presented as canonical names to every consumer.
 function readRegister() {
-  try {
-    const raw = fs.readFileSync(REGISTER, 'utf8');
-    const parsed = raw.split('\n').filter(l => l.trim()).map(l => {
+  const parsed = getCachedFile(REGISTER, raw => {
+    return raw.split('\n').filter(l => l.trim()).map(l => {
       try { return JSON.parse(l); } catch (_) { return null; }
     }).filter(Boolean);
-    resetDedupeState();
-    return parsed.map(ev => translateEvent(ev)).filter(Boolean);
-  } catch (_) { return []; }
+  });
+  if (!parsed) return [];
+  resetDedupeState();
+  return parsed.map(ev => translateEvent(ev)).filter(Boolean);
 }
 
 // ── Register writer ──────────────────────────────────────────────────────────
@@ -338,17 +420,17 @@ function buildBridgeData() {
   // Heartbeat
   let heartbeat = { ts: null, status: 'down', current_slice: null,
                     slice_elapsed_seconds: null, processed_total: 0 };
-  try {
-    const raw = JSON.parse(fs.readFileSync(HEARTBEAT, 'utf8'));
-    const age = raw.ts ? (Date.now() - new Date(raw.ts).getTime()) / 1000 : Infinity;
+  const hbRaw = getCachedFile(HEARTBEAT, raw => JSON.parse(raw));
+  if (hbRaw) {
+    const age = hbRaw.ts ? (Date.now() - new Date(hbRaw.ts).getTime()) / 1000 : Infinity;
     heartbeat = {
-      ts:                        raw.ts   ?? null,
-      status:                    age < 60 ? (raw.status ?? 'idle') : 'down',
-      current_slice:             raw.current_slice ?? null,
-      slice_elapsed_seconds:     raw.slice_elapsed_seconds ?? null,
-      processed_total:           raw.processed_total ?? 0,
+      ts:                        hbRaw.ts   ?? null,
+      status:                    age < 60 ? (hbRaw.status ?? 'idle') : 'down',
+      current_slice:             hbRaw.current_slice ?? null,
+      slice_elapsed_seconds:     hbRaw.slice_elapsed_seconds ?? null,
+      processed_total:           hbRaw.processed_total ?? 0,
     };
-  } catch (_) { /* file missing or malformed → keep defaults */ }
+  }
 
   // First-output signal (invocation gap indicator)
   try {
@@ -435,10 +517,13 @@ function buildBridgeData() {
     if (ev.event === 'MERGED') mergedIds.add(String(ev.id));
   }
 
-  // Queue files
-  let files = [];
-  try { files = fs.readdirSync(QUEUE_DIR).filter(f => f.endsWith('.md')); }
-  catch (_) {}
+  // Queue files (cached dir scan — avoids re-stat + re-parse of 348 files)
+  const queueCache = getCachedDir(
+    QUEUE_DIR,
+    f => f.endsWith('.md'),
+    (_fp, raw) => parseFrontmatter(raw),
+  );
+  const files = queueCache.files;
 
   // Build terminal ID set: filesystem ACCEPTED/ARCHIVED/SLICE markers + MERGED events
   const terminalIds = new Set(mergedIds);
@@ -467,11 +552,7 @@ function buildBridgeData() {
       case 'ERROR':       queue.error++;   break;
     }
 
-    let fm = {};
-    try {
-      const content = fs.readFileSync(path.join(QUEUE_DIR, filename), 'utf8');
-      fm = parseFrontmatter(content);
-    } catch (_) {}
+    const fm = queueCache.parsed[filename] || {};
 
     const id = fm.id ?? rawId;
     const goalFromRegister = commissioned[id]?.goal ?? null;
@@ -521,22 +602,23 @@ function buildBridgeData() {
 
 // ── Cost Center aggregation ──────────────────────────────────────────────────
 function buildCostsData() {
-  // Rom — sum DONE events from register.jsonl
+  // Rom — sum DONE events from register.jsonl (cached parse)
   const romRow = { role: 'rom', model: 'claude-sonnet-4-6', count: 0,
                    tokens_in: 0, tokens_out: 0, cost_usd: 0 };
-  try {
-    const raw = fs.readFileSync(REGISTER, 'utf8');
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue;
-      let ev;
-      try { ev = JSON.parse(line); } catch (_) { continue; }
+  const regParsed = getCachedFile(REGISTER, raw => {
+    return raw.split('\n').filter(l => l.trim()).map(l => {
+      try { return JSON.parse(l); } catch (_) { return null; }
+    }).filter(Boolean);
+  });
+  if (regParsed) {
+    for (const ev of regParsed) {
       if (ev.event !== 'DONE') continue;
       romRow.count++;
       romRow.tokens_in  += ev.tokensIn  ?? 0;
       romRow.tokens_out += ev.tokensOut ?? 0;
       romRow.cost_usd   += ev.costUsd   ?? 0;
     }
-  } catch (_) { /* register.jsonl absent */ }
+  }
 
   // Nog — sum rounds[] across all DONE.md files in queue/
   const nogRow = { role: 'nog', model: 'claude-sonnet-4-6', count: 0,
@@ -875,21 +957,21 @@ const server = http.createServer(async (req, res) => {
     const now = Date.now();
     let watcher = { status: 'down', heartbeatAge_s: null, currentSlice: null,
                     elapsedSeconds: null, lastActivityAge_s: null, processedTotal: 0 };
-    try {
-      const raw = JSON.parse(fs.readFileSync(HEARTBEAT, 'utf8'));
-      const age = raw.ts ? (now - new Date(raw.ts).getTime()) / 1000 : Infinity;
+    const hbHealth = getCachedFile(HEARTBEAT, raw => JSON.parse(raw));
+    if (hbHealth) {
+      const age = hbHealth.ts ? (now - new Date(hbHealth.ts).getTime()) / 1000 : Infinity;
       const status = age < 30 ? 'up' : age < 60 ? 'stale' : 'down';
-      const lastActivityAge = raw.last_activity_ts
-        ? (now - new Date(raw.last_activity_ts).getTime()) / 1000 : null;
+      const lastActivityAge = hbHealth.last_activity_ts
+        ? (now - new Date(hbHealth.last_activity_ts).getTime()) / 1000 : null;
       watcher = {
         status,
         heartbeatAge_s:    Math.round(age),
-        currentSlice:      raw.current_slice ?? null,
-        elapsedSeconds:    raw.slice_elapsed_seconds ?? null,
+        currentSlice:      hbHealth.current_slice ?? null,
+        elapsedSeconds:    hbHealth.slice_elapsed_seconds ?? null,
         lastActivityAge_s: lastActivityAge != null ? Math.round(lastActivityAge) : null,
-        processedTotal:    raw.processed_total ?? 0,
+        processedTotal:    hbHealth.processed_total ?? 0,
       };
-    } catch (_) {}
+    }
     const wormholePath = path.join(REPO_ROOT, 'bridge', 'wormhole-heartbeat.json');
     let wormhole = { lastWriteTs: null, lastWriteTool: null, lastWritePath: null, ageSeconds: null };
     try {
@@ -1126,4 +1208,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections };
+module.exports = { buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections, getCachedFile, getCachedDir, _cache };

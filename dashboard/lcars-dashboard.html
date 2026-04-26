@@ -3911,7 +3911,7 @@
   updateServicesPanel();
   setInterval(updateServicesPanel, 15000);
   fetchBridge();
-  setInterval(fetchBridge, 2000);
+  setInterval(fetchBridge, 5000);
 
   // ── Combined Queue panel ─────────────────────────────────────────────────────
   // Merges staged items and accepted (PENDING) items into one list.
@@ -4514,7 +4514,7 @@
   }
 
   fetchCombinedQueue();
-  setInterval(fetchCombinedQueue, 2000);
+  setInterval(fetchCombinedQueue, 5000);
 
   // ── Slice Investigation Panel ──────────────────────────────────────────────
   let invPanelOpen = false;

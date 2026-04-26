@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFile, execSync } = require('child_process');
 const { appendTimesheet, updateTimesheet, rebuildMerged } = require('./slicelog');
 const { appendKiraEvent } = require('./kira-events');
@@ -1846,6 +1847,8 @@ let heartbeatState = {
   processed_total: 0,
 };
 
+let _lastHeartbeatHash = null;
+
 function writeHeartbeat() {
   const elapsedSeconds = heartbeatState.pickupTime
     ? Math.floor((Date.now() - heartbeatState.pickupTime) / 1000)
@@ -1873,6 +1876,18 @@ function writeHeartbeat() {
     queue,
   };
 
+  // Hash-dedup: skip disk write if state hasn't changed (ts excluded from hash).
+  const hashPayload = JSON.stringify({
+    status: snapshot.status,
+    current_slice: snapshot.current_slice,
+    slice_elapsed_seconds: snapshot.slice_elapsed_seconds,
+    processed_total: snapshot.processed_total,
+    queue: snapshot.queue,
+  });
+  const hash = crypto.createHash('md5').update(hashPayload).digest('hex');
+  if (hash === _lastHeartbeatHash) return;
+  _lastHeartbeatHash = hash;
+
   try {
     fs.writeFileSync(HEARTBEAT_FILE, JSON.stringify(snapshot, null, 2) + '\n');
   } catch (err) {
@@ -1887,6 +1902,12 @@ function writeHeartbeat() {
 let processing = false;
 let idlePrintCounter = 0;
 let sessionHasProcessed = false;
+
+// Adaptive idle poll — increases poll interval after sustained inactivity.
+const IDLE_POLL_MS      = 30000; // 30s when idle
+const IDLE_THRESHOLD    = 24;    // 24 × 5s = 2 minutes before switching to idle poll
+let consecutiveIdleTicks = 0;
+let currentPollMs = null; // set in start() from config.pollIntervalMs
 
 // ---------------------------------------------------------------------------
 // Active child process tracking — keyed by slice ID.
@@ -4092,6 +4113,17 @@ function processControlFiles() {
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive poll scheduler
+// ---------------------------------------------------------------------------
+
+let _pollTimer = null;
+
+function schedulePoll() {
+  if (_pollTimer) clearInterval(_pollTimer);
+  _pollTimer = setInterval(poll, currentPollMs);
+}
+
+// ---------------------------------------------------------------------------
 // Poll cycle
 // ---------------------------------------------------------------------------
 
@@ -4167,6 +4199,16 @@ function poll() {
       // Within same priority: lexicographic (numeric FIFO)
       return a.localeCompare(b);
     });
+
+  // Reset adaptive idle on any activity (DONE or QUEUED files present).
+  if (doneFiles.length > 0 || pendingFiles.length > 0) {
+    if (consecutiveIdleTicks >= IDLE_THRESHOLD) {
+      currentPollMs = config.pollIntervalMs;
+      schedulePoll();
+      log('info', 'poll', { msg: `Adaptive idle reset: poll interval → ${currentPollMs}ms` });
+    }
+    consecutiveIdleTicks = 0;
+  }
 
   // === Priority 1: Evaluate completed DONE files first ===
   // This ensures each build merges to main BEFORE the next build starts,
@@ -4281,6 +4323,13 @@ function poll() {
       const snap = getQueueSnapshot(QUEUE_DIR);
       const ts = timestampNow();
       print(`  ${C.dim}·${C.reset}  Queue: ${snap.waiting} waiting${SYM.sep}${snap.in_progress} in progress${SYM.sep}${snap.completed} done${SYM.sep}${snap.failed} failed  [${ts}]`);
+    }
+    // Adaptive idle: increase poll interval after sustained inactivity.
+    consecutiveIdleTicks++;
+    if (consecutiveIdleTicks === IDLE_THRESHOLD && currentPollMs !== IDLE_POLL_MS) {
+      currentPollMs = IDLE_POLL_MS;
+      schedulePoll();
+      log('info', 'poll', { msg: `Adaptive idle: poll interval → ${IDLE_POLL_MS}ms after ${IDLE_THRESHOLD} idle ticks` });
     }
     return;
   }
@@ -4966,8 +5015,9 @@ if (require.main === module) {
   // Start heartbeat interval.
   setInterval(writeHeartbeat, config.heartbeatIntervalMs);
 
-  // Start poll interval + immediate first poll.
-  setInterval(poll, config.pollIntervalMs);
+  // Start adaptive poll loop + immediate first poll.
+  currentPollMs = config.pollIntervalMs;
+  schedulePoll();
   poll();
 
   // -------------------------------------------------------------------------
