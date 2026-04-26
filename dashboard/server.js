@@ -22,6 +22,10 @@ const { translateEvent, resetDedupeState } = require(path.join(REPO_ROOT, 'bridg
 
 const CORS_ORIGIN  = 'https://dax-dashboard.lovable.app';
 
+// Hide DONE slices older than this many days from the Queue panel.
+// Pre-lifecycle stragglers sit in DONE forever; this keeps them out of sight.
+const STALE_DONE_DAYS = 7;
+
 // ── Mtime-based in-memory cache ─────────────────────────────────────────────
 // Eliminates per-request re-parse of large files (register.jsonl is 27MB+).
 // Each cache entry stores { mtimeMs, value }. On read, stat the file; if mtime
@@ -582,6 +586,14 @@ function buildBridgeData() {
 
     // Skip terminal slices (merged to main or marked ACCEPTED/ARCHIVED/SLICE)
     if (terminalIds.has(rawId)) continue;
+
+    // Hide stale DONE entries (mtime > STALE_DONE_DAYS) from the Queue panel
+    if (state === 'DONE') {
+      try {
+        const mtimeMs = fs.statSync(path.join(QUEUE_DIR, filename)).mtimeMs;
+        if (Date.now() - mtimeMs > STALE_DONE_DAYS * 86400 * 1000) continue;
+      } catch (_) {}
+    }
 
     switch (state) {
       case 'PENDING':     queue.waiting++; break;
@@ -1247,4 +1259,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections, getCachedFile, getCachedDir, _cache, getCachedBridgeData, getCachedCostsData, buildBridgeData, buildCostsData };
+module.exports = { buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections, getCachedFile, getCachedDir, _cache, getCachedBridgeData, getCachedCostsData, buildBridgeData, buildCostsData, STALE_DONE_DAYS };
