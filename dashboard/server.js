@@ -587,12 +587,21 @@ function buildBridgeData() {
     // Skip terminal slices (merged to main or marked ACCEPTED/ARCHIVED/SLICE)
     if (terminalIds.has(rawId)) continue;
 
-    // Hide stale DONE entries (mtime > STALE_DONE_DAYS) from the Queue panel
+    // Hide stale DONE entries from the Queue panel.
+    // Prefer frontmatter `completed` (immune to mtime refresh by recovery ops);
+    // fall back to mtime when `completed` is missing or unparseable.
     if (state === 'DONE') {
-      try {
-        const mtimeMs = fs.statSync(path.join(QUEUE_DIR, filename)).mtimeMs;
-        if (Date.now() - mtimeMs > STALE_DONE_DAYS * 86400 * 1000) continue;
-      } catch (_) {}
+      const staleCutoff = STALE_DONE_DAYS * 86400 * 1000;
+      const fm0 = queueCache.parsed[filename] || {};
+      const completedMs = fm0.completed ? new Date(fm0.completed).getTime() : NaN;
+      if (!isNaN(completedMs)) {
+        if (Date.now() - completedMs > staleCutoff) continue;
+      } else {
+        try {
+          const mtimeMs = fs.statSync(path.join(QUEUE_DIR, filename)).mtimeMs;
+          if (Date.now() - mtimeMs > staleCutoff) continue;
+        } catch (_) {}
+      }
     }
 
     switch (state) {
