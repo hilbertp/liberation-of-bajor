@@ -419,10 +419,11 @@ function getQueueSnapshot(queueDir) {
   } catch (_) {
     return { waiting: 0, in_progress: 0, completed: 0, failed: 0, awaiting_review: 0 };
   }
-  const waiting     = files.filter(f => f.endsWith('-QUEUED.md') || f.endsWith('-PENDING.md')).length;
-  const in_progress = files.filter(f => f.endsWith('-IN_PROGRESS.md')).length;
-  const completed   = files.filter(f => f.endsWith('-DONE.md')).length;
-  const failed      = files.filter(f => f.endsWith('-ERROR.md')).length;
+  const canonical   = files.filter(f => CANONICAL_SUFFIX_RE.test(f));
+  const waiting     = canonical.filter(f => f.endsWith('-QUEUED.md') || f.endsWith('-PENDING.md')).length;
+  const in_progress = canonical.filter(f => f.endsWith('-IN_PROGRESS.md')).length;
+  const completed   = canonical.filter(f => f.endsWith('-DONE.md')).length;
+  const failed      = canonical.filter(f => f.endsWith('-ERROR.md')).length;
   return { waiting, in_progress, completed, failed, awaiting_review: completed };
 }
 
@@ -4139,8 +4140,9 @@ function poll() {
   }
 
   // Scan both DONE and QUEUED/PENDING up front so counts are available for logging.
-  const doneFiles = files.filter(f => f.endsWith('-DONE.md')).sort();
-  const pendingFiles = files
+  const canonicalFiles = files.filter(f => CANONICAL_SUFFIX_RE.test(f));
+  const doneFiles = canonicalFiles.filter(f => f.endsWith('-DONE.md')).sort();
+  const pendingFiles = canonicalFiles
     .filter(f => f.endsWith('-QUEUED.md') || f.endsWith('-PENDING.md'))
     .sort((a, b) => {
       // Priority sorting: apendments (rejections) jump the queue.
@@ -4414,7 +4416,7 @@ function crashRecovery() {
   const actions = [];
   let files;
   try {
-    files = fs.readdirSync(QUEUE_DIR);
+    files = fs.readdirSync(QUEUE_DIR).filter(f => CANONICAL_SUFFIX_RE.test(f));
   } catch (err) {
     log('warn', 'startup_recovery', { msg: 'Cannot read queue dir for crash recovery', error: err.message });
     return actions;
@@ -4645,7 +4647,7 @@ function restagedBootstrap(opts) {
 
   let doneFiles;
   try {
-    doneFiles = fs.readdirSync(queueDir).filter(f => /^\d+-DONE\.md$/.test(f));
+    doneFiles = fs.readdirSync(queueDir).filter(f => CANONICAL_SUFFIX_RE.test(f) && /^\d+-DONE\.md$/.test(f));
   } catch (_) { return; }
 
   for (const file of doneFiles) {
@@ -4835,7 +4837,7 @@ function backfillAcceptedFiles(opts) {
   } catch (_) { return; }
 
   // Find slices that have a -DONE.md but no -ACCEPTED.md.
-  const doneFiles = files.filter(f => /^\d+-DONE\.md$/.test(f));
+  const doneFiles = files.filter(f => CANONICAL_SUFFIX_RE.test(f) && /^\d+-DONE\.md$/.test(f));
   let processed = 0;
   let skipped = 0;
 
