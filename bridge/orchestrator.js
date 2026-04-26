@@ -3877,6 +3877,7 @@ function handleReturnToStage(sliceId) {
 
   let bodySource = 'none';
   let stagedContent = content;
+  let nowIso = null;
 
   if (isErrorSidecar) {
     // ERROR sidecars lack required frontmatter + body — reconstruct from trash/register.
@@ -3896,7 +3897,7 @@ function handleReturnToStage(sliceId) {
     }
 
     // Inject Return-to-Stage notice at the top of the body.
-    const nowIso = new Date().toISOString();
+    nowIso = new Date().toISOString();
     const notice = `## Return-to-Stage notice (${nowIso})\n\nThis slice was returned to STAGED via the Ops button after a prior failure.\nPrior attempt's ERROR file archived to \`bridge/trash/${id}-ERROR.md.return-to-stage-${nowIso.replace(/[:.]/g, '-')}\`.\nSee register events for the full failure history.\n`;
 
     // Split recovered content into frontmatter + body, inject notice.
