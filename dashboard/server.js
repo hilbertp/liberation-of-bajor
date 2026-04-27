@@ -13,6 +13,7 @@ const REGISTER     = path.join(REPO_ROOT, 'bridge', 'register.jsonl');
 const STAGED_DIR   = path.join(REPO_ROOT, 'bridge', 'staged');
 const TRASH_DIR    = path.join(REPO_ROOT, 'bridge', 'trash');
 const DASHBOARD    = path.join(__dirname, 'lcars-dashboard.html');
+const TOKENS_CSS   = path.join(__dirname, 'tokens.css');
 
 const FIRST_OUTPUT  = path.join(REPO_ROOT, 'bridge', 'first-output.json');
 const NOG_ACTIVE    = path.join(REPO_ROOT, 'bridge', 'nog-active.json');
@@ -760,6 +761,15 @@ const server = http.createServer(async (req, res) => {
     fs.readFile(DASHBOARD, (err, data) => {
       if (err) { res.writeHead(500); res.end('Internal Server Error'); return; }
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(data);
+    });
+    return;
+  }
+
+  if (pathname === '/tokens.css') {
+    fs.readFile(TOKENS_CSS, (err, data) => {
+      if (err) { res.writeHead(500); res.end('Internal Server Error'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/css; charset=utf-8' });
       res.end(data);
     });
     return;
