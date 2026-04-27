@@ -3847,11 +3847,7 @@ function handleReturnToStage(sliceId) {
     }
   }
 
-  // Also reject QUEUED/PENDING (not yet started).
-  if (fs.existsSync(path.join(QUEUE_DIR, `${id}-QUEUED.md`)) ||
-      fs.existsSync(path.join(QUEUE_DIR, `${id}-PENDING.md`))) {
-    return { ok: false, error: `Slice ${id} is QUEUED — cannot return to stage (not terminal)` };
-  }
+  // TODO: Allow QUEUED/PENDING slices to return to stage (remove guard, add to terminal search)
 
   // Find the terminal file.
   let terminalPath = null;

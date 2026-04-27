@@ -4307,6 +4307,7 @@
     // Action buttons
     let actionsHtml;
     if (isQueued) {
+      // TODO: Add clickable accepted pill before Edit button
       actionsHtml = `<button class="queue-btn-edit" onclick="queueEdit('${eid}')">Edit</button>`;
     } else if (isStaged) {
       actionsHtml = `
