@@ -3847,12 +3847,15 @@ function handleReturnToStage(sliceId) {
     }
   }
 
-  // TODO: Allow QUEUED/PENDING slices to return to stage (remove guard, add to terminal search)
-
-  // Find the terminal file.
+  // Find the terminal file (includes QUEUED/PENDING so accepted slices can return to stage).
+  const RETURNABLE_SUFFIXES = [
+    ...TERMINAL_SUFFIXES,
+    { suffix: '-QUEUED.md',  event: 'QUEUED' },
+    { suffix: '-PENDING.md', event: 'PENDING' },
+  ];
   let terminalPath = null;
   let fromEvent = null;
-  for (const { suffix, event } of TERMINAL_SUFFIXES) {
+  for (const { suffix, event } of RETURNABLE_SUFFIXES) {
     const p = path.join(QUEUE_DIR, `${id}${suffix}`);
     if (fs.existsSync(p)) {
       terminalPath = p;

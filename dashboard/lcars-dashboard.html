@@ -1726,6 +1726,9 @@
     user-select: none;
   }
 
+  .queue-accepted-pill.clickable { cursor: pointer; }
+  .queue-accepted-pill.clickable:hover { background: #fef3c7; color: #92400e; border-color: #fde68a; text-decoration: line-through; }
+
   .queue-btn-edit {
     display: inline-flex;
     align-items: center;
@@ -4307,8 +4310,8 @@
     // Action buttons
     let actionsHtml;
     if (isQueued) {
-      // TODO: Add clickable accepted pill before Edit button
-      actionsHtml = `<button class="queue-btn-edit" onclick="queueEdit('${eid}')">Edit</button>`;
+      actionsHtml = `<button class="queue-accepted-pill clickable" onclick="returnToStage('${eid}', this)" title="Click to return to stage">&#10003; Accepted</button>
+        <button class="queue-btn-edit" onclick="queueEdit('${eid}')">Edit</button>`;
     } else if (isStaged) {
       actionsHtml = `
         <button class="queue-btn-accept" onclick="queueAccept('${eid}')">&#10003; Approve</button>
