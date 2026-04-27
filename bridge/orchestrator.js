@@ -4311,11 +4311,35 @@ function poll() {
   // Scan both DONE and QUEUED/PENDING up front so counts are available for logging.
   const canonicalFiles = files.filter(f => CANONICAL_SUFFIX_RE.test(f));
   const doneFiles = canonicalFiles.filter(f => f.endsWith('-DONE.md')).sort();
+
+  // Read queue-order.json for human-defined pickup priority.
+  // Format: flat JSON array of slice ID strings, e.g. ["231","229","230"].
+  // If present and valid, slices are picked in this order; unordered slices
+  // fall back to amendments-first + lexicographic FIFO.
+  const QUEUE_ORDER_FILE = path.join(__dirname, 'queue-order.json');
+  let queueOrder = null;
+  try {
+    const raw = JSON.parse(fs.readFileSync(QUEUE_ORDER_FILE, 'utf-8'));
+    if (Array.isArray(raw)) queueOrder = raw.map(String);
+  } catch (_) { /* absent or malformed — fall back to FIFO */ }
+
   const pendingFiles = canonicalFiles
     .filter(f => f.endsWith('-QUEUED.md') || f.endsWith('-PENDING.md'))
     .sort((a, b) => {
-      // Priority sorting: apendments (rejections) jump the queue.
-      // Read frontmatter to check for apendment_cycle/amendment_cycle or references field.
+      const idA = a.replace(/-(?:QUEUED|PENDING)\.md$/, '');
+      const idB = b.replace(/-(?:QUEUED|PENDING)\.md$/, '');
+
+      // If queue-order.json exists, respect its ordering.
+      if (queueOrder) {
+        const posA = queueOrder.indexOf(idA);
+        const posB = queueOrder.indexOf(idB);
+        if (posA !== -1 && posB !== -1) return posA - posB;
+        if (posA !== -1) return -1;
+        if (posB !== -1) return 1;
+        // Both absent from order — fall through to legacy sort
+      }
+
+      // Legacy fallback: apendments (rejections) jump the queue.
       const isApendmentA = (() => {
         try {
           const content = fs.readFileSync(path.join(QUEUE_DIR, a), 'utf-8');
@@ -4330,10 +4354,8 @@ function poll() {
           return meta && (meta.type === 'amendment' || !!meta.apendment || !!meta.amendment || (parseInt(meta.round, 10) > 1) || (meta.references && meta.references !== 'null'));
         } catch (_) { return false; }
       })();
-      // Apendments sort before fresh slices
       if (isApendmentA && !isApendmentB) return -1;
       if (!isApendmentA && isApendmentB) return 1;
-      // Within same priority: lexicographic (numeric FIFO)
       return a.localeCompare(b);
     });
 
