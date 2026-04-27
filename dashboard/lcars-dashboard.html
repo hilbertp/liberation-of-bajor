@@ -285,21 +285,36 @@
     display: flex;
     flex-direction: column;
   }
-  .nog-gate-section {
+  .nog-running-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .nog-running-subtitle { font-size: 12px; color: #6b7280; }
+  .nog-reviewing-pill {
+    font-size: 11px; font-weight: 600;
+    background: #dcfce7; color: #15803d;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px; padding: 1px 8px;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .nog-reviewing-pill::before { content: '●'; font-size: 8px; }
+
+  .nog-slice-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
     margin-bottom: 10px;
   }
-  .nog-gate-section:last-of-type {
-    margin-bottom: 0;
-  }
-  .nog-gate-header {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #6b7280;
-    margin-bottom: 4px;
-    padding-bottom: 3px;
-    border-bottom: 1px solid #f3f4f6;
+  .nog-slice-id { font-size: 12px; font-weight: 700; color: #374151; margin-right: 6px; }
+  .nog-slice-title-text { font-size: 12px; color: #6b7280; }
+  .nog-slice-elapsed { font-size: 12px; color: #6b7280; }
+
+  .nog-gate-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
   }
   .nog-check-row {
     display: flex;
@@ -2634,30 +2649,47 @@
 
           <!-- Running state: dual-gate checklist -->
           <div class="nog-running-state" id="nog-running-state" style="display:none">
-            <div class="postbuild-lane-slice-title" id="nog-slice-title"></div>
-            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px">
-              <span class="round-badge r1" id="nog-round-badge">R1</span>
-              <span class="postbuild-lane-round" id="nog-round-label">Round 1 of 5</span>
-            </div>
-            <div id="nog-prev-reason"></div>
 
-            <!-- Gate 1 — Acceptance Criteria -->
-            <div class="nog-gate-section" id="nog-gate1">
-              <div class="nog-gate-header">Gate 1 &mdash; Acceptance Criteria</div>
-              <div id="nog-gate1-rows">
-                <!-- Dynamically populated per-AC rows -->
+            <!-- Header row -->
+            <div class="nog-running-header">
+              <div>
+                <span style="font-size:12px;font-weight:700;color:#111827;margin-right:6px">Nog</span>
+                <span class="nog-running-subtitle" id="nog-round-label">Dual-gate review · round 1 of 5</span>
+              </div>
+              <span class="nog-reviewing-pill">reviewing</span>
+            </div>
+
+            <!-- Slice title + elapsed -->
+            <div class="nog-slice-row">
+              <div>
+                <span class="nog-slice-id" id="nog-slice-id-label"></span>
+                <span class="nog-slice-title-text" id="nog-slice-title"></span>
+              </div>
+              <span class="nog-slice-elapsed" id="nog-elapsed-val-inline">&mdash;</span>
+            </div>
+
+            <!-- 2-column gate grid -->
+            <div class="nog-gate-grid" id="nog-gate-grid">
+              <!-- Gate 1: 1 cell -->
+              <div class="nog-check-row" id="nog-gate1-ac">
+                <span class="nog-check-icon pending">&#9675;</span> Gate 1 · AC check
+              </div>
+              <!-- Gate 2: 4 cells -->
+              <div class="nog-check-row" id="nog-gate2-lint">
+                <span class="nog-check-icon pending">&#9675;</span> Gate 2 · Linting
+              </div>
+              <div class="nog-check-row" id="nog-gate2-readability">
+                <span class="nog-check-icon pending">&#9675;</span> Gate 2 · Readability
+              </div>
+              <div class="nog-check-row" id="nog-gate2-naming">
+                <span class="nog-check-icon pending">&#9675;</span> Gate 2 · Naming / anti-patterns
+              </div>
+              <div class="nog-check-row" id="nog-gate2-deadcode">
+                <span class="nog-check-icon pending">&#9675;</span> Gate 2 · Dead code
               </div>
             </div>
 
-            <!-- Gate 2 — Implementation Quality -->
-            <div class="nog-gate-section" id="nog-gate2">
-              <div class="nog-gate-header">Gate 2 &mdash; Implementation Quality</div>
-              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Lint</div>
-              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Readability</div>
-              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Naming</div>
-              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Anti-patterns</div>
-              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Dead code</div>
-            </div>
+            <div id="nog-prev-reason"></div>
           </div>
 
           <!-- Progress block: anchored to bottom via margin-top:auto -->
