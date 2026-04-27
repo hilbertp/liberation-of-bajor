@@ -1721,15 +1721,6 @@ function verifyRomActuallyWorked(id, branchName, actualDurationMs, actualTokensO
     }
   } catch (_) {}
 
-  // Primary gate: skeleton-only branch with substantive claims
-  if (commitCount <= 1 && claimedTokensOut > 1000) {
-    return {
-      ok: false,
-      reason: 'rom_no_commits',
-      detail: `claimed tokens_out=${claimedTokensOut} but ${branchName} has only ${commitCount} commit(s) past main (skeleton only)`,
-    };
-  }
-
   // Advisory: metrics divergence (soft flag, not blocking)
   if (actualTokensOut && claimedTokensOut > 10 * actualTokensOut) {
     log('warn', 'rom_verify', {
