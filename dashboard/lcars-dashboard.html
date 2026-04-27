@@ -1029,6 +1029,7 @@
   .tag-accepted { background: #d1fae5; color: #065f46; }
 
   .cost-cell { color: #6b7280; }
+  .cost-estimated { color: #9ca3af; }
   .time-cell { color: #6b7280; }
 
   /* ── CREW ROSTER ──────────────────────────────────────── */
@@ -3715,6 +3716,19 @@
     return '$' + usd.toFixed(2);
   }
 
+  // Standard pricing constants for cost estimation (Claude Sonnet)
+  const INPUT_COST_PER_M = 3.00;
+  const OUTPUT_COST_PER_M = 15.00;
+
+  function fmtCostWithFallback(costUsd, tokIn, tokOut) {
+    if (costUsd != null && costUsd > 0) return '$' + costUsd.toFixed(2);
+    if ((tokIn ?? 0) > 0 && (tokOut ?? 0) > 0) {
+      const est = (tokIn / 1_000_000 * INPUT_COST_PER_M) + (tokOut / 1_000_000 * OUTPUT_COST_PER_M);
+      return `<span class="cost-estimated">~$${est.toFixed(2)} est.</span>`;
+    }
+    return '\u2014';
+  }
+
   function outcomeHtml(outcome) {
     switch (outcome) {
       case 'MERGED':
@@ -3785,7 +3799,7 @@
           <span class="col-outcome">${outcomeHtml(outcome)}</span>
           <span class="col-duration">${fmtDuration(durMs)}</span>
           <span class="col-tokens">${fmtTokens(tokIn, tokOut)}</span>
-          <span class="col-cost">${fmtCost(costUsd)}</span>
+          <span class="col-cost">${fmtCostWithFallback(costUsd, tokIn, tokOut)}</span>
         </div>
         <div class="history-expand ${isExpanded ? 'open' : ''}" id="history-expand-${eid}">
           <span class="history-expand-desc" ${isFail ? 'style="color:#dc2626"' : ''}>${escHtml(expandDesc)}</span>
@@ -3893,12 +3907,12 @@
       { label: 'Outcome', value: outcome === 'MERGED' ? 'Merged' : outcome === 'ERROR' ? 'Error' : outcome === 'MAX_ROUNDS_EXHAUSTED' ? 'Max rounds' : 'Escalated' },
       { label: 'Duration', value: fmtDuration(durMs) },
       { label: 'Tokens', value: fmtTokens(tokIn, tokOut) },
-      { label: 'Cost', value: fmtCost(costUsd) },
+      { label: 'Cost', value: fmtCostWithFallback(costUsd, tokIn, tokOut), rawHtml: true },
       { label: 'Rounds', value: String(rounds) },
     ];
     document.getElementById('history-detail-context').innerHTML = ctxItems.map((ci, i) =>
       (i > 0 ? '<span class="history-ctx-sep">\u00b7</span>' : '') +
-      `<span class="history-ctx-item"><span class="history-ctx-label">${escHtml(ci.label)}:</span> <span class="history-ctx-value">${escHtml(ci.value)}</span></span>`
+      `<span class="history-ctx-item"><span class="history-ctx-label">${escHtml(ci.label)}:</span> <span class="history-ctx-value">${ci.rawHtml ? ci.value : escHtml(ci.value)}</span></span>`
     ).join('');
 
     renderHistoryDetailBody(item);
@@ -3938,7 +3952,7 @@
     html += `<div class="detail-totals-bar">
       <span class="total-item"><span class="total-label">Duration</span> <span class="total-value">${fmtDuration(durMs)}</span></span>
       <span class="total-item"><span class="total-label">Tokens</span> <span class="total-value">${fmtTokens(tokIn, tokOut)}</span></span>
-      <span class="total-item"><span class="total-label">Cost</span> <span class="total-value">${fmtCost(costUsd)}</span></span>
+      <span class="total-item"><span class="total-label">Cost</span> <span class="total-value">${fmtCostWithFallback(costUsd, tokIn, tokOut)}</span></span>
       <span class="total-item"><span class="total-label">Rounds</span> <span class="total-value">${totalRounds}</span></span>
     </div>`;
 
@@ -3957,7 +3971,7 @@
             <span class="apendment-round-meta">
               <span>${fmtDuration(r.durationMs)}</span>
               <span>${fmtTokens(r.tokensIn, r.tokensOut)}</span>
-              <span>${fmtCost(r.costUsd)}</span>
+              <span>${fmtCostWithFallback(r.costUsd, r.tokensIn, r.tokensOut)}</span>
               <span class="nog-verdict-badge ${verdictClass}">${escHtml(verdict)}</span>
             </span>
           </div>
@@ -3979,7 +3993,7 @@
             <span class="apendment-round-meta">
               <span>${doneEv ? fmtDuration(doneEv.durationMs) : '\u2014'}</span>
               <span>${doneEv ? fmtTokens(doneEv.tokensIn, doneEv.tokensOut) : '\u2014'}</span>
-              <span>${doneEv ? fmtCost(doneEv.costUsd) : '\u2014'}</span>
+              <span>${doneEv ? fmtCostWithFallback(doneEv.costUsd, doneEv.tokensIn, doneEv.tokensOut) : '\u2014'}</span>
               ${nogEv ? `<span class="nog-verdict-badge ${nogEv.event === 'NOG_PASS' ? 'pass' : 'return'}">${escHtml(nogEv.event)}</span>` : ''}
             </span>
           </div>
@@ -3997,7 +4011,7 @@
           <span class="apendment-round-meta">
             <span>${fmtDuration(item.durationMs)}</span>
             <span>${fmtTokens(item.tokensIn, item.tokensOut)}</span>
-            <span>${fmtCost(item.costUsd)}</span>
+            <span>${fmtCostWithFallback(item.costUsd, item.tokensIn, item.tokensOut)}</span>
           </span>
         </div>
       </div>`;
