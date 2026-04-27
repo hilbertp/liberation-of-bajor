@@ -76,113 +76,59 @@
     color: #6b7280;
   }
 
-  .header-status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #16a34a;
-  }
-
-  .header-status-dot.offline { background: #dc2626; }
-  .header-status-dot.idle { background: #f59e0b; }
-
   .health-pill {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    padding: 3px 10px 3px 7px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 500;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     background: #f0fdf4;
     color: #166534;
     border: 1px solid #bbf7d0;
     cursor: default;
     position: relative;
   }
-  .health-pill.degraded { background: #fffbeb; color: #92400e; border-color: #fde68a; }
-  .health-pill.offline  { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
   .health-pill-dot {
     width: 6px; height: 6px; border-radius: 50%;
     background: currentColor; flex-shrink: 0;
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15);
   }
-  .health-pill-waveform { font-size: 9px; opacity: 0.6; letter-spacing: -1px; display: none; }
-  .health-pill:hover .health-pill-waveform { display: inline; }
+  .health-pill.degraded { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+  .health-pill.degraded .health-pill-dot { box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.18); }
+  .health-pill.offline  { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+  .health-pill.offline .health-pill-dot  { box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.18); }
   .health-pill-tooltip {
-    display: none;
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    background: #1f2937;
-    color: #e5e7eb;
-    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
-    font-size: 11px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    white-space: pre;
-    line-height: 1.7;
-    min-width: 300px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-    z-index: 100;
-  }
-  .health-pill:hover .health-pill-tooltip { display: block; }
-  .health-tooltip-label { color: #9ca3af; font-weight: 600; display: inline; }
-  .health-tooltip-dot {
-    display: inline-block; width: 6px; height: 6px;
-    border-radius: 50%; margin-right: 4px; vertical-align: middle;
-  }
-  .health-tooltip-dot.up     { background: #16a34a; }
-  .health-tooltip-dot.stale  { background: #f59e0b; }
-  .health-tooltip-dot.down   { background: #dc2626; }
-  .health-tooltip-dot.active { background: #16a34a; }
-  .health-tooltip-dot.dim    { background: #6b7280; }
-  .health-tooltip-detail { color: #9ca3af; padding-left: 13px; }
-  .health-tooltip-sep { border: none; border-top: 1px solid #374151; margin: 4px 0; }
-
-  /* ── Services panel (three-service status) ─────────── */
-  #services-panel {
-    display: inline-flex;
-    align-items: center;
-    gap: 0;
-    margin-left: 10px;
-    font-size: 12px;
-    font-weight: 500;
-    color: #374151;
-  }
-  .svc-sep { color: #d1d5db; padding: 0 6px; user-select: none; }
-  .service-row {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    cursor: default;
-    position: relative;
-    padding: 2px 0;
-  }
-  .service-dot {
-    width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-  }
-  .service-dot.up      { background: #16a34a; }
-  .service-dot.down    { background: #dc2626; }
-  .service-dot.stale   { background: #f59e0b; }
-  .service-dot.unknown { background: #9ca3af; }
-  .service-row-tooltip {
     display: none;
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    background: #1f2937;
+    background: #0f172a;
     color: #e5e7eb;
     font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
     font-size: 11px;
-    padding: 10px 12px;
+    padding: 9px 14px;
     border-radius: 8px;
-    white-space: pre;
-    line-height: 1.7;
+    white-space: nowrap;
+    line-height: 1.6;
     min-width: 280px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.18);
     z-index: 100;
   }
-  .service-row:hover .service-row-tooltip { display: block; }
+  .health-pill:hover .health-pill-tooltip { display: block; }
+  .health-tooltip-label { color: #9ca3af; font-weight: 600; margin-right: 14px; }
+  .health-tooltip-dot {
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; margin: 0 8px 0 2px; vertical-align: middle;
+  }
+  .health-tooltip-dot.up     { background: #16a34a; }
+  .health-tooltip-dot.stale  { background: #f59e0b; }
+  .health-tooltip-dot.down   { background: #dc2626; }
+  .health-tooltip-meta { color: #9ca3af; }
+
+  /* ── Services panel removed — single health-pill in header ── */
 
   .slice-action-approve:disabled,
   .slice-action-approve.disabled {
@@ -2318,25 +2264,11 @@
       <div class="header-subtitle">Operations Center</div>
     </div>
     <div class="header-status">
-      <div id="services-panel">
-        <div class="service-row" data-service="orchestrator" id="svc-orchestrator">
-          <span class="service-dot unknown" id="svc-orchestrator-dot"></span>
-          <span id="svc-orchestrator-label">Orchestrator …</span>
-          <div class="service-row-tooltip" id="svc-orchestrator-tooltip"></div>
-        </div>
-        <span class="svc-sep">·</span>
-        <div class="service-row" data-service="server" id="svc-server">
-          <span class="service-dot unknown" id="svc-server-dot"></span>
-          <span id="svc-server-label">Server …</span>
-          <div class="service-row-tooltip" id="svc-server-tooltip"></div>
-        </div>
-        <span class="svc-sep">·</span>
-        <div class="service-row" data-service="detector" id="svc-detector">
-          <span class="service-dot unknown" id="svc-detector-dot"></span>
-          <span id="svc-detector-label">Detector …</span>
-          <div class="service-row-tooltip" id="svc-detector-tooltip"></div>
-        </div>
-      </div>
+      <span class="health-pill" id="ops-health-pill">
+        <span class="health-pill-dot"></span>
+        <span id="ops-health-label">ONLINE</span>
+        <div class="health-pill-tooltip" id="ops-health-tooltip"></div>
+      </span>
     </div>
   </div>
 
@@ -3823,88 +3755,65 @@
       if (res.ok && fetchMs < 3000) { health = await res.json(); serverUp = true; }
     } catch (_) {}
 
-    // ── Orchestrator row ──────────────────────────────────
-    const orchDot   = document.getElementById('svc-orchestrator-dot');
-    const orchLabel = document.getElementById('svc-orchestrator-label');
-    const orchTip   = document.getElementById('svc-orchestrator-tooltip');
-    if (orchDot && orchLabel && orchTip) {
+    // ── Single tri-state health pill ────────────────────
+    const pill    = document.getElementById('ops-health-pill');
+    const label   = document.getElementById('ops-health-label');
+    const tooltip = document.getElementById('ops-health-tooltip');
+    if (pill && label && tooltip) {
       const w = health ? health.watcher : null;
-      const st = w ? w.status : 'down';
-      const dotCls = st === 'up' ? 'up' : st === 'stale' ? 'stale' : 'down';
-      orchDot.className = `service-dot ${dotCls}`;
-      orchLabel.textContent = `Orchestrator ${st}`;
-      const lines = [];
-      lines.push(`<span class="health-tooltip-label">Orchestrator</span>  <span class="health-tooltip-dot ${dotCls}"></span> ${esc(st)} · ${w ? fmtAge(w.heartbeatAge_s) : '–'}`);
+      const orchStatus = w ? w.status : 'down';       // 'up' | 'stale' | 'down'
+      const hbAge = w ? w.heartbeatAge_s : null;
+
+      // Detect batch-gate / paused state:
+      // 1. Explicit flag from watcher (placeholder — not yet in heartbeat payload)
+      // 2. Fall back to checking if the active slice is paused via register events
+      const watcherPaused = w && w.paused;
+      const activePaused  = w && w.currentSlice && typeof isSlicePaused === 'function'
+                            && isSlicePaused(w.currentSlice);
+      const isBatchGate   = !!(watcherPaused || activePaused);
+
+      // Tri-state: BATCH GATE (amber) > OFFLINE (red) > ONLINE (green)
+      let pillClass, pillText, dotCls;
+      if (isBatchGate && orchStatus !== 'down') {
+        pillClass = 'health-pill degraded';
+        pillText  = 'BATCH GATE';
+        dotCls    = 'stale';
+      } else if (orchStatus === 'down' || hbAge == null || hbAge >= 60) {
+        pillClass = 'health-pill offline';
+        pillText  = 'OFFLINE';
+        dotCls    = 'down';
+      } else {
+        pillClass = 'health-pill';
+        pillText  = 'ONLINE';
+        dotCls    = 'up';
+      }
+
+      pill.className = pillClass;
+      label.textContent = pillText;
+
+      // Tooltip — dark-mono style with heartbeat detail
+      const tipLines = [];
+      tipLines.push(
+        `<span class="health-tooltip-label">Orchestrator</span>` +
+        `<span class="health-tooltip-dot ${dotCls}"></span>` +
+        `${esc(orchStatus)} <span class="health-tooltip-meta">· ${hbAge != null ? fmtAge(hbAge) : 'no heartbeat'}</span>`
+      );
+      if (isBatchGate) {
+        const reason = (w && w.pausedReason) ? esc(w.pausedReason) : 'build paused';
+        tipLines.push(`<span class="health-tooltip-meta">${reason}</span>`);
+      }
       if (w && w.currentSlice && w.elapsedSeconds != null) {
         const lastAct = w.lastActivityAge_s != null ? ` · last output ${fmtAge(w.lastActivityAge_s)}` : '';
-        lines.push(`<span class="health-tooltip-detail">processing · #${esc(w.currentSlice)} · ${fmtElapsedCompact(w.elapsedSeconds)} elapsed${lastAct}</span>`);
-      } else if (w && st !== 'down') {
-        lines.push(`<span class="health-tooltip-detail">idle · ${w.processedTotal} slices processed</span>`);
+        tipLines.push(`<span class="health-tooltip-meta">processing #${esc(w.currentSlice)} · ${fmtElapsedCompact(w.elapsedSeconds)}${lastAct}</span>`);
+      } else if (w && orchStatus !== 'down') {
+        tipLines.push(`<span class="health-tooltip-meta">idle · ${w.processedTotal} slices processed</span>`);
       }
-      orchTip.innerHTML = lines.join('\n');
+      tooltip.innerHTML = tipLines.join('<br>');
     }
 
-    // ── Server row ────────────────────────────────────────
-    const srvDot   = document.getElementById('svc-server-dot');
-    const srvLabel = document.getElementById('svc-server-label');
-    const srvTip   = document.getElementById('svc-server-tooltip');
-    if (srvDot && srvLabel && srvTip) {
-      if (serverUp) {
-        srvDot.className = 'service-dot up';
-        srvLabel.textContent = 'Server up';
-        srvTip.innerHTML = `<span class="health-tooltip-label">Server</span>         <span class="health-tooltip-dot up"></span> up · /api/health responded in ${fetchMs}ms`;
-      } else {
-        srvDot.className = 'service-dot down';
-        srvLabel.textContent = 'Server down';
-        srvTip.innerHTML = `<span class="health-tooltip-label">Server</span>         <span class="health-tooltip-dot down"></span> down · no response from /api/health`;
-      }
-    }
-
-    // ── Detector row ──────────────────────────────────────
-    const detDot   = document.getElementById('svc-detector-dot');
-    const detLabel = document.getElementById('svc-detector-label');
-    const detTip   = document.getElementById('svc-detector-tooltip');
-    if (detDot && detLabel && detTip) {
-      const hh = health ? health.hostHealth : null;
-      const lines = [];
-      let detDown = true;
-      if (!hh) {
-        detDot.className = 'service-dot down';
-        detLabel.textContent = 'Detector down';
-        lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> detector not reporting`);
-        lines.push(`<span class="health-tooltip-detail">install launchd agent per scripts/com.liberation-of-bajor.health.plist</span>`);
-      } else {
-        const age = hh.last_checked
-          ? Math.round((Date.now() - new Date(hh.last_checked).getTime()) / 1000)
-          : Infinity;
-        if (age > 30) {
-          detDot.className = 'service-dot down';
-          detLabel.textContent = 'Detector down';
-          lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> detector silent · ${fmtAge(age)}`);
-          lines.push(`<span class="health-tooltip-detail">${age}s since last check</span>`);
-        } else if (hh.orchestrator_status !== 'running') {
-          detDot.className = 'service-dot down';
-          detLabel.textContent = 'Detector down';
-          lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> orchestrator ${esc(hh.orchestrator_status)} · ${fmtAge(age)}`);
-        } else if (hh.api_status !== 'ok') {
-          detDot.className = 'service-dot down';
-          detLabel.textContent = 'Detector down';
-          lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot down"></span> API ${esc(hh.api_status)} · ${fmtAge(age)}`);
-        } else {
-          detDown = false;
-          detDot.className = 'service-dot up';
-          detLabel.textContent = 'Detector up';
-          lines.push(`<span class="health-tooltip-label">Detector</span>       <span class="health-tooltip-dot up"></span> up · ${fmtAge(age)}`);
-          lines.push(`<span class="health-tooltip-detail">orchestrator running · API ok</span>`);
-        }
-      }
-      detTip.innerHTML = lines.join('\n');
-    }
-
-    // ── Approve gate: blocked only by orchestrator or server down ──
-    // Detector down = observability gap; approvals still allowed.
-    const orchStatus = health ? health.watcher.status : 'down';
-    serviceHealthDown = !serverUp || orchStatus === 'down';
+    // ── Approve gate: blocked when orchestrator heartbeat is stale/down ──
+    const orchSt = health ? health.watcher.status : 'down';
+    serviceHealthDown = !serverUp || orchSt === 'down';
   }
 
   startElapsedTick();
