@@ -200,7 +200,6 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    justify-content: center;
     opacity: 1;
   }
 
@@ -242,7 +241,138 @@
     color: #9ca3af;
   }
 
-  /* Active Nog lane content */
+  /* ── Nog idle state ── */
+  .nog-idle-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 0;
+    gap: 6px;
+  }
+  .nog-idle-glyph {
+    font-size: 32px;
+    line-height: 1;
+    margin-bottom: 4px;
+    opacity: 0.45;
+  }
+  .nog-idle-primary {
+    font-size: 15px;
+    font-weight: 600;
+    color: #374151;
+    margin-bottom: 2px;
+  }
+  .nog-idle-secondary {
+    font-size: 13px;
+    color: #9ca3af;
+  }
+  .nog-hint-pill {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    background: #f3f4f6;
+    border-radius: 999px;
+  }
+
+  /* ── Nog running state: dual-gate checklist ── */
+  .nog-running-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .nog-gate-section {
+    margin-bottom: 10px;
+  }
+  .nog-gate-section:last-of-type {
+    margin-bottom: 0;
+  }
+  .nog-gate-header {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #6b7280;
+    margin-bottom: 4px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .nog-check-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 13px;
+    color: #374151;
+  }
+  .nog-check-icon {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .nog-check-icon.pending { color: #d1d5db; }
+  .nog-check-icon.pass    { color: #22c55e; }
+  .nog-check-icon.fail    { color: #ef4444; }
+
+  /* ── Nog progress block (bottom-anchored, mirrors Active Build) ── */
+  .nog-progress-block {
+    margin-top: auto;
+  }
+  .nog-progress-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 16px;
+  }
+  .nog-progress-builder {
+    font-size: 13px;
+    color: #6b7280;
+  }
+  .nog-progress-stage {
+    font-size: 12px;
+    color: #9ca3af;
+  }
+  .nog-progress-elapsed {
+    text-align: right;
+  }
+  .nog-progress-elapsed-val {
+    font-size: 18px;
+    font-weight: 700;
+    font-family: ui-monospace, monospace;
+    color: #111827;
+  }
+  .nog-progress-elapsed-label {
+    font-size: 10px;
+    color: #9ca3af;
+    display: block;
+    text-align: right;
+  }
+  .nog-progress-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .nog-progress-actions a {
+    font-size: 12px;
+    color: #6b7280;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .nog-progress-actions a:hover {
+    color: #374151;
+    text-decoration: underline;
+  }
+
+  /* Active Nog lane content (legacy compat) */
   .postbuild-lane-active-info {
     margin-top: 4px;
   }
@@ -2376,12 +2506,62 @@
         <div class="section-title">Post-Build Pipeline</div>
         <div class="postbuild-lane" id="nog-lane">
           <div class="postbuild-lane-header">
-            <span class="postbuild-lane-name">Nog &mdash; Evaluator</span>
+            <span class="postbuild-lane-name">Nog &middot; Code Reviewer</span>
             <span class="postbuild-badge" id="nog-badge" style="display:none"></span>
           </div>
-          <div class="postbuild-lane-desc" id="nog-lane-desc">Checking ACs satisfied &middot; anti-patterns &middot; style &middot; linting</div>
-          <div class="postbuild-lane-active-info" id="nog-active-info" style="display:none"></div>
-          <div id="nog-idle-msg" style="color:#9ca3af;font-style:italic;font-size:13px;margin-top:6px">Waiting for Rom &middot; no slice under review</div>
+
+          <!-- Idle state -->
+          <div class="nog-idle-state" id="nog-idle-state">
+            <div class="nog-idle-glyph">&#128269;</div>
+            <div class="nog-idle-primary">Standing by</div>
+            <div class="nog-idle-secondary">Reviews each slice after Rom delivers it</div>
+            <div class="nog-hint-pill">AC pass &middot; lint &middot; readability &middot; naming &middot; anti-patterns &middot; dead code</div>
+          </div>
+
+          <!-- Running state: dual-gate checklist -->
+          <div class="nog-running-state" id="nog-running-state" style="display:none">
+            <div class="postbuild-lane-slice-title" id="nog-slice-title"></div>
+            <div style="display:flex;align-items:center;gap:8px;margin:4px 0 8px">
+              <span class="round-badge r1" id="nog-round-badge">R1</span>
+              <span class="postbuild-lane-round" id="nog-round-label">Round 1 of 5</span>
+            </div>
+            <div id="nog-prev-reason"></div>
+
+            <!-- Gate 1 — Acceptance Criteria -->
+            <div class="nog-gate-section" id="nog-gate1">
+              <div class="nog-gate-header">Gate 1 &mdash; Acceptance Criteria</div>
+              <div id="nog-gate1-rows">
+                <!-- Dynamically populated per-AC rows -->
+              </div>
+            </div>
+
+            <!-- Gate 2 — Implementation Quality -->
+            <div class="nog-gate-section" id="nog-gate2">
+              <div class="nog-gate-header">Gate 2 &mdash; Implementation Quality</div>
+              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Lint</div>
+              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Readability</div>
+              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Naming</div>
+              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Anti-patterns</div>
+              <div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Dead code</div>
+            </div>
+          </div>
+
+          <!-- Progress block: anchored to bottom via margin-top:auto -->
+          <div class="nog-progress-block" id="nog-progress-block" style="display:none">
+            <div class="nog-progress-footer">
+              <div>
+                <div class="nog-progress-stage" id="nog-progress-stage">Reviewing&hellip;</div>
+                <div class="nog-progress-actions">
+                  <a onclick="viewNogLog()">View live log</a>
+                  <a onclick="stopNogReview()" style="color:#dc2626">Stop review</a>
+                </div>
+              </div>
+              <div class="nog-progress-elapsed">
+                <span class="nog-progress-elapsed-val" id="nog-elapsed-val">&mdash;</span>
+                <span class="nog-progress-elapsed-label">elapsed</span>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="postbuild-arrow">&darr;</div>
         <div class="postbuild-lane">
@@ -2756,62 +2936,61 @@
   let cachedRegisterEvents = [];
 
   function updateNogLane(nogActive, events) {
-    const panel     = document.getElementById('postbuild-panel');
-    const lane      = document.getElementById('nog-lane');
-    const badge     = document.getElementById('nog-badge');
-    const laneDesc  = document.getElementById('nog-lane-desc');
-    const activeInfo = document.getElementById('nog-active-info');
-    const idleMsg    = document.getElementById('nog-idle-msg');
-    if (!panel || !lane || !badge || !laneDesc || !activeInfo) return;
+    const panel          = document.getElementById('postbuild-panel');
+    const lane           = document.getElementById('nog-lane');
+    const badge          = document.getElementById('nog-badge');
+    const idleState      = document.getElementById('nog-idle-state');
+    const runningState   = document.getElementById('nog-running-state');
+    const progressBlock  = document.getElementById('nog-progress-block');
+    if (!panel || !lane || !badge || !idleState || !runningState) return;
 
     // Find latest NOG_RETURN event for context
     const lastNogReturn = (events || []).filter(e => e.event === 'NOG_RETURN').pop();
 
     if (!nogActive || !nogActive.sliceId) {
-      // Check if we just had a NOG_RETURN (just-fired state)
-      const recentReturn = lastNogReturn && (Date.now() - new Date(lastNogReturn.ts).getTime()) < 120000;
-
+      // ── Idle state ──
       clearInterval(nogElapsedInterval);
       nogElapsedInterval = null;
       panel.style.opacity = '1';
       panel.style.border = '1px solid #e5e7eb';
       lane.classList.remove('nog-lane-active');
       badge.style.display = 'none';
-      activeInfo.style.display = 'none';
-      activeInfo.innerHTML = '';
+      runningState.style.display = 'none';
+      if (progressBlock) progressBlock.style.display = 'none';
+
+      // Check if we just had a NOG_RETURN (just-fired state)
+      const recentReturn = lastNogReturn && (Date.now() - new Date(lastNogReturn.ts).getTime()) < 120000;
 
       if (recentReturn && lastNogReturn) {
-        // NOG_RETURN just-fired state
-        if (idleMsg) {
-          const round = lastNogReturn.round ?? 1;
-          const reason = lastNogReturn.reason || 'No reason provided';
-          idleMsg.style.display = '';
-          idleMsg.innerHTML = `<span class="nog-verdict-badge return">NOG_RETURN</span> ${escHtml(reason)}<br><span style="color:#9ca3af;font-size:12px">Waiting for Rom to complete round ${round + 1}\u2026</span>`;
-          idleMsg.style.fontStyle = 'normal';
-          idleMsg.style.color = '#374151';
-        }
-        laneDesc.style.display = 'none';
+        // NOG_RETURN just-fired — show verdict in idle area
+        const round = lastNogReturn.round ?? 1;
+        const reason = lastNogReturn.reason || 'No reason provided';
+        idleState.style.display = 'flex';
+        idleState.innerHTML = `
+          <div class="nog-idle-glyph">&#128269;</div>
+          <div class="nog-idle-primary"><span class="nog-verdict-badge return">NOG_RETURN</span></div>
+          <div class="nog-idle-secondary">${escHtml(reason)}</div>
+          <div class="nog-hint-pill">Waiting for Rom to complete round ${round + 1}&hellip;</div>`;
       } else {
         // Normal idle
-        if (idleMsg) {
-          idleMsg.style.display = '';
-          idleMsg.textContent = 'Waiting for Rom \u00b7 no slice under review';
-          idleMsg.style.fontStyle = 'italic';
-          idleMsg.style.color = '#9ca3af';
-        }
-        laneDesc.style.display = '';
+        idleState.style.display = 'flex';
+        idleState.innerHTML = `
+          <div class="nog-idle-glyph">&#128269;</div>
+          <div class="nog-idle-primary">Standing by</div>
+          <div class="nog-idle-secondary">Reviews each slice after Rom delivers it</div>
+          <div class="nog-hint-pill">AC pass &middot; lint &middot; readability &middot; naming &middot; anti-patterns &middot; dead code</div>`;
       }
       return;
     }
 
-    // Active — Nog is reviewing
+    // ── Running state — Nog is reviewing ──
     panel.style.opacity = '1';
     panel.style.border = '1px solid #e5e7eb';
     lane.classList.add('nog-lane-active');
     badge.style.display = 'none';
-    laneDesc.style.display = 'none';
-    if (idleMsg) idleMsg.style.display = 'none';
-    activeInfo.style.display = '';
+    idleState.style.display = 'none';
+    runningState.style.display = '';
+    if (progressBlock) progressBlock.style.display = '';
 
     const invokedAt = nogActive.invokedAt ? new Date(nogActive.invokedAt) : null;
     const title = nogActive.title ? `#${nogActive.sliceId} ${nogActive.title}` : `#${nogActive.sliceId}`;
@@ -2826,40 +3005,82 @@
       return m > 0 ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`;
     }
 
-    // Round badge color class
+    // Update slice title
+    const sliceTitleEl = document.getElementById('nog-slice-title');
+    if (sliceTitleEl) sliceTitleEl.textContent = title;
+
+    // Update round badge + label
     const roundClass = round === 1 ? 'r1' : round >= 5 ? 'r5' : 'r2-4';
+    const roundBadge = document.getElementById('nog-round-badge');
+    const roundLabel = document.getElementById('nog-round-label');
+    if (roundBadge) { roundBadge.textContent = `R${round}`; roundBadge.className = `round-badge ${roundClass}`; }
+    if (roundLabel) roundLabel.textContent = `Round ${round} of 5`;
 
     // Previous NOG_RETURN reason for round >= 2
     const prevReturnForSlice = (events || [])
       .filter(e => e.event === 'NOG_RETURN' && String(e.id) === String(nogActive.sliceId))
       .pop();
-
-    let prevReasonHtml = '';
-    if (round >= 2 && prevReturnForSlice) {
-      prevReasonHtml = `<div class="nog-return-reason">${escHtml(prevReturnForSlice.reason || '')}</div>`;
+    const prevReasonEl = document.getElementById('nog-prev-reason');
+    if (prevReasonEl) {
+      if (round >= 2 && prevReturnForSlice) {
+        prevReasonEl.innerHTML = `<div class="nog-return-reason">${escHtml(prevReturnForSlice.reason || '')}</div>`;
+      } else {
+        prevReasonEl.innerHTML = '';
+      }
     }
 
-    activeInfo.innerHTML = `
-      <div class="postbuild-lane-slice-title">${escHtml(title)}</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-        <span class="round-badge ${roundClass}">R${round}</span>
-        <span class="postbuild-lane-round">Round ${round} of 5</span>
-      </div>
-      ${prevReasonHtml}
-      <div class="postbuild-lane-timer-row">
-        <span class="postbuild-lane-identity">Checking ACs satisfied &middot; anti-patterns &middot; style &middot; linting\u2026</span>
-        <span class="postbuild-lane-elapsed">
-          <span class="postbuild-lane-elapsed-val" id="nog-elapsed-val">${formatNogElapsed()}</span>
-          <span class="postbuild-lane-elapsed-label">elapsed</span>
-        </span>
-      </div>`;
+    // Gate 1 — populate AC rows from slice data if available
+    const gate1Rows = document.getElementById('nog-gate1-rows');
+    if (gate1Rows) {
+      const acs = nogActive.acs || [];
+      if (acs.length > 0) {
+        gate1Rows.innerHTML = acs.map(ac => {
+          const icon = ac.status === 'pass' ? '<span class="nog-check-icon pass">&#10003;</span>'
+                     : ac.status === 'fail' ? '<span class="nog-check-icon fail">&#10007;</span>'
+                     : '<span class="nog-check-icon pending">&#9675;</span>';
+          return `<div class="nog-check-row">${icon} ${escHtml(ac.label || ac.text || 'AC')}</div>`;
+        }).join('');
+      } else {
+        gate1Rows.innerHTML = '<div class="nog-check-row"><span class="nog-check-icon pending">&#9675;</span> Acceptance criteria check</div>';
+      }
+    }
 
-    // Start elapsed tick if not already running
+    // Gate 2 — reset all to pending (static labels)
+    const gate2 = document.getElementById('nog-gate2');
+    if (gate2) {
+      const g2Items = (nogActive.gate2 || []);
+      const g2Labels = ['Lint', 'Readability', 'Naming', 'Anti-patterns', 'Dead code'];
+      const rows = gate2.querySelectorAll('.nog-check-row');
+      rows.forEach((row, i) => {
+        const g2 = g2Items[i];
+        const iconEl = row.querySelector('.nog-check-icon');
+        if (iconEl && g2) {
+          iconEl.className = `nog-check-icon ${g2.status || 'pending'}`;
+          iconEl.innerHTML = g2.status === 'pass' ? '&#10003;' : g2.status === 'fail' ? '&#10007;' : '&#9675;';
+        }
+      });
+    }
+
+    // Progress stage label
+    const stageEl = document.getElementById('nog-progress-stage');
+    if (stageEl) stageEl.textContent = `Reviewing\u2026`;
+
+    // Elapsed timer
+    const elapsedEl = document.getElementById('nog-elapsed-val');
+    if (elapsedEl) elapsedEl.textContent = formatNogElapsed();
+
     clearInterval(nogElapsedInterval);
     nogElapsedInterval = setInterval(() => {
       const el = document.getElementById('nog-elapsed-val');
       if (el) el.textContent = formatNogElapsed();
     }, 1000);
+  }
+
+  function viewNogLog() {
+    // Placeholder — future: open Nog live log viewer
+  }
+  function stopNogReview() {
+    // Placeholder — future: stop Nog review process
   }
 
   function updatePipelineUI(data) {
