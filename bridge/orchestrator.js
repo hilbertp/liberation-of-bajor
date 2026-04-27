@@ -2654,6 +2654,17 @@ function hasMergedEvent(id, regFile) {
 }
 
 /**
+ * depsAreMet(sliceMeta)
+ *
+ * Returns true if every ID in the depends_on frontmatter field has a MERGED
+ * event in the register. Returns true when depends_on is absent/empty/null.
+ */
+function depsAreMet(sliceMeta) {
+  // TODO: implement dependency gate
+  return true;
+}
+
+/**
  * mergeBranch(id, branchName, title)
  *
  * Worktree-based FUSE-safe merge:
