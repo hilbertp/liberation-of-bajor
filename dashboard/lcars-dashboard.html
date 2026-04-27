@@ -424,15 +424,28 @@
   }
 
   .active-slice-idle {
-    font-size: 14px;
-    color: #9ca3af;
-    padding: 16px 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 0;
+    gap: 6px;
+  }
+
+  .active-slice-idle-glyph {
+    font-size: 32px;
+    line-height: 1;
+    margin-bottom: 4px;
+    opacity: 0.45;
   }
 
   .active-slice-idle-primary {
     font-size: 15px;
     font-weight: 600;
-    margin-bottom: 4px;
+    color: #374151;
+    margin-bottom: 2px;
   }
 
   .active-slice-idle-primary.warning {
@@ -444,12 +457,27 @@
     color: #9ca3af;
   }
 
+  .staged-hint-pill {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #6b7280;
+    background: #f3f4f6;
+    border-radius: 999px;
+  }
+
+  /* ── Progress block (bottom-anchored) ── */
+  .active-slice-progress-block {
+    margin-top: auto;
+  }
+
   /* ── Builder footer ── */
   .active-slice-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: auto;
     padding-top: 16px;
   }
 
@@ -2380,26 +2408,31 @@
 
         <!-- Idle state content -->
         <div id="mission-idle-text" class="active-slice-idle">
-          <div class="active-slice-idle-primary">All clear</div>
-          <div class="active-slice-idle-secondary">No active build, nothing pending</div>
+          <div class="active-slice-idle-glyph" id="idle-glyph">&#9201;</div>
+          <div class="active-slice-idle-primary">Standing by</div>
+          <div class="active-slice-idle-secondary">Picks up the next approved slice automatically</div>
+          <div class="staged-hint-pill" id="staged-hint-pill" style="display:none">0 staged</div>
         </div>
 
-        <!-- Footer: builder + pause button (only during active) -->
-        <div class="active-slice-footer" id="active-slice-footer" style="display:none">
-          <span class="active-slice-builder">Rom &middot; Backend Engineer</span>
-          <button class="pause-build-btn" onclick="pauseBuild()">
-            &#9208; Pause
-          </button>
-        </div>
+        <!-- Progress block: anchored to bottom via margin-top:auto -->
+        <div class="active-slice-progress-block" id="active-slice-progress-block">
+          <!-- Footer: builder + pause button (only during active) -->
+          <div class="active-slice-footer" id="active-slice-footer" style="display:none">
+            <span class="active-slice-builder">Rom &middot; Backend Engineer</span>
+            <button class="pause-build-btn" onclick="pauseBuild()">
+              &#9208; Pause
+            </button>
+          </div>
 
-        <!-- Paused footer: Resume + Abort with inline confirmation -->
-        <div class="paused-footer" id="paused-footer" style="display:none">
-          <button class="resume-btn" onclick="resumeBuild()">&#9654; Resume</button>
-          <button class="abort-btn" id="abort-btn" onclick="showAbortConfirm()">&#10005; Abort</button>
-          <span id="abort-confirm" style="display:none;margin-left:8px;font-size:13px;color:#dc2626">
-            Abort? <button onclick="confirmAbort()" style="color:#dc2626;background:#fef2f2;border:1px solid #dc2626;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;margin-left:4px">Yes</button>
-            <button onclick="cancelAbort()" style="color:#6b7280;background:#f9fafb;border:1px solid #d1d5db;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;margin-left:2px">Cancel</button>
-          </span>
+          <!-- Paused footer: Resume + Abort with inline confirmation -->
+          <div class="paused-footer" id="paused-footer" style="display:none">
+            <button class="resume-btn" onclick="resumeBuild()">&#9654; Resume</button>
+            <button class="abort-btn" id="abort-btn" onclick="showAbortConfirm()">&#10005; Abort</button>
+            <span id="abort-confirm" style="display:none;margin-left:8px;font-size:13px;color:#dc2626">
+              Abort? <button onclick="confirmAbort()" style="color:#dc2626;background:#fef2f2;border:1px solid #dc2626;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;margin-left:4px">Yes</button>
+              <button onclick="cancelAbort()" style="color:#6b7280;background:#f9fafb;border:1px solid #d1d5db;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;margin-left:2px">Cancel</button>
+            </span>
+          </div>
         </div>
       </div>
       <div class="active-slice-aside" id="active-slice-aside"></div>
@@ -3097,47 +3130,38 @@
 
       const primaryEl   = idleEl.querySelector('.active-slice-idle-primary');
       const secondaryEl = idleEl.querySelector('.active-slice-idle-secondary');
+      const glyphEl     = document.getElementById('idle-glyph');
+      const pillEl      = document.getElementById('staged-hint-pill');
 
       const lastError = recent && recent.length > 0 && (recent[0].outcome === 'ERROR');
 
       if (lastError) {
         const last = recent[0];
+        if (glyphEl) glyphEl.style.display = 'none';
         primaryEl.textContent = `Slice #${last.id} failed \u2014 ${last.title || 'Untitled'}`;
         primaryEl.className = 'active-slice-idle-primary';
         primaryEl.style.color = '#f87171';
         secondaryEl.textContent = humanReason(last.reason || last.error_reason || '');
         secondaryEl.style.color = '#fca5a5';
+        pillEl.style.display = 'none';
         renderActiveBriefError(last.id);
-      } else if (stagedItemCount > 0) {
-        primaryEl.textContent = `${stagedItemCount} slice${stagedItemCount !== 1 ? 's' : ''} awaiting your approval`;
-        primaryEl.className = 'active-slice-idle-primary warning';
-        secondaryEl.textContent = 'Accept below to start the next build \u2192';
-        document.getElementById('active-slice-aside').innerHTML = '';
-      } else if (recent && recent.length > 0) {
-        const last = recent[0];
-        primaryEl.textContent = `Last: #${last.id} \u2014 ${last.title || 'Untitled'}`;
-        primaryEl.className = 'active-slice-idle-primary';
-        if (last.completedAt) {
-          const ago = Math.floor((Date.now() - new Date(last.completedAt).getTime()) / 1000);
-          let agoStr;
-          if (ago < 60)       agoStr = `${ago}s ago`;
-          else if (ago < 3600) agoStr = `${Math.floor(ago / 60)}m ${ago % 60}s ago`;
-          else                 agoStr = `${Math.floor(ago / 3600)}h ${Math.floor((ago % 3600) / 60)}m ago`;
-          secondaryEl.textContent = `completed ${agoStr} \u00b7 All clear`;
-        } else {
-          secondaryEl.textContent = 'All clear';
-        }
-        document.getElementById('active-slice-aside').innerHTML = '';
       } else {
-        primaryEl.textContent = 'All clear';
+        if (glyphEl) { glyphEl.textContent = '\u23F1'; glyphEl.style.display = ''; }
+        primaryEl.textContent = 'Standing by';
         primaryEl.className = 'active-slice-idle-primary';
-        secondaryEl.textContent = 'No active build, nothing pending';
-        document.getElementById('active-slice-aside').innerHTML = '';
-      }
-
-      if (!lastError) {
         primaryEl.style.color = '';
+        secondaryEl.textContent = 'Picks up the next approved slice automatically';
         secondaryEl.style.color = '';
+        document.getElementById('active-slice-aside').innerHTML = '';
+
+        // Staged-count hint pill
+        if (stagedItemCount > 0) {
+          pillEl.textContent = `${stagedItemCount} staged`;
+          pillEl.style.display = '';
+        } else {
+          pillEl.textContent = '0 staged';
+          pillEl.style.display = '';
+        }
       }
 
       idleEl.style.display = '';
