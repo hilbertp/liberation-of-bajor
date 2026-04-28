@@ -53,6 +53,22 @@ const LOG_FILE       = path.resolve(__dirname, config.logFile);
 const HEARTBEAT_FILE = path.resolve(__dirname, config.heartbeatFile);
 const PROJECT_DIR    = path.resolve(__dirname, config.projectDir);
 let REGISTER_FILE  = path.resolve(__dirname, 'register.jsonl');
+
+// Register parse cache — invalidated by mtime change; shared across one poll cycle.
+let _regCache = null; // { file: string, mtime: number, lines: string[] }
+
+function _getRegLines(file) {
+  const f = file || REGISTER_FILE;
+  try {
+    const mtime = fs.statSync(f).mtimeMs;
+    if (_regCache && _regCache.file === f && _regCache.mtime === mtime) {
+      return _regCache.lines;
+    }
+    const lines = fs.readFileSync(f, 'utf-8').trim().split('\n').filter(Boolean);
+    _regCache = { file: f, mtime, lines };
+    return lines;
+  } catch (_) { return []; }
+}
 const RESTAGED_BOOTSTRAP_MARKER = path.resolve(__dirname, '.restaged-bootstrap-done');
 const NOG_ACTIVE_FILE = path.resolve(__dirname, 'nog-active.json');
 let TRASH_DIR        = path.resolve(QUEUE_DIR, '..', 'trash');
@@ -2562,7 +2578,7 @@ function invokeRom(sliceContent, donePath, inProgressPath, errorPath, id, effect
 function latestRestagedTs(id, regFile) {
   const file = regFile || REGISTER_FILE;
   try {
-    const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
+    const lines = _getRegLines(file);
     let latest = null;
     for (const line of lines) {
       try {
@@ -2587,7 +2603,7 @@ function latestRestagedTs(id, regFile) {
 function latestAttemptStartTs(id, regFile) {
   const file = regFile || REGISTER_FILE;
   try {
-    const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
+    const lines = _getRegLines(file);
     let latestRestaged = null;
     let latestCommissioned = null;
     for (const line of lines) {
@@ -2620,7 +2636,7 @@ function hasReviewEvent(id, regFile) {
   try {
     const cutoff = latestAttemptStartTs(id, file);
     if (cutoff === null) return false;
-    const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
+    const lines = _getRegLines(file);
     resetDedupeState();
     for (const line of lines) {
       try {
@@ -2648,7 +2664,7 @@ function hasMergedEvent(id, regFile) {
   const file = regFile || REGISTER_FILE;
   try {
     const cutoff = latestRestagedTs(id, file);
-    const lines = fs.readFileSync(file, 'utf-8').trim().split('\n').filter(Boolean);
+    const lines = _getRegLines(file);
     resetDedupeState();
     for (const line of lines) {
       try {
