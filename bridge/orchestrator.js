@@ -4655,6 +4655,42 @@ function poll() {
 // ---------------------------------------------------------------------------
 
 /**
+ * migrateArchivedToParked()
+ *
+ * One-time startup migration: renames {id}-ARCHIVED.md → {id}-PARKED.md for
+ * slices that completed before the slice-145 naming change. Only migrates files
+ * that have a corresponding {id}-DONE.md and no {id}-PARKED.md yet. Idempotent.
+ */
+function migrateArchivedToParked() {
+  let files;
+  try { files = fs.readdirSync(QUEUE_DIR); } catch (_) { return; }
+
+  let migrated = 0;
+  for (const f of files) {
+    if (!f.endsWith('-ARCHIVED.md')) continue;
+    const id         = f.replace('-ARCHIVED.md', '');
+    const archivedPath = path.join(QUEUE_DIR, f);
+    const parkedPath   = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+    const donePath     = path.join(QUEUE_DIR, `${id}-DONE.md`);
+
+    // Only migrate if DONE exists and PARKED does not yet exist.
+    if (!fs.existsSync(donePath) || fs.existsSync(parkedPath)) continue;
+
+    try {
+      fs.renameSync(archivedPath, parkedPath);
+      migrated++;
+    } catch (err) {
+      log('warn', 'startup_migration', { id, msg: 'Failed to rename ARCHIVED→PARKED', error: err.message });
+    }
+  }
+
+  if (migrated > 0) {
+    log('info', 'startup_migration', { msg: `Migrated ${migrated} legacy ARCHIVED→PARKED files` });
+    print(`  ${C.green}${SYM.check}${C.reset}  Startup migration: renamed ${migrated} legacy ARCHIVED → PARKED`);
+  }
+}
+
+/**
  * crashRecovery()
  *
  * Runs at startup before entering the poll loop. Scans the queue directory for
@@ -5209,6 +5245,7 @@ if (require.main === module) {
   cleanupDeadWorktrees();
 
   const recoveryActions = crashRecovery();
+  migrateArchivedToParked();
   restagedBootstrap();
   backfillAcceptedFiles();
   backfillArchive();
