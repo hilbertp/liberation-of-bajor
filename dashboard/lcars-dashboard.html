@@ -3525,6 +3525,14 @@
   }
 
   // ── Bridge data wiring ──────────────────────────────────────────────────────
+  function _bridgeFingerprint(data) {
+    return (data.heartbeat?.ts ?? '') + '|' +
+           (data.heartbeat?.status ?? '') + '|' +
+           (data.recent?.length ?? 0) + '|' +
+           (data.events?.length ?? 0) + '|' +
+           (data.slices?.length ?? 0);
+  }
+
   async function fetchBridge() {
     let data;
     try {
@@ -3533,8 +3541,18 @@
       data = await res.json();
     } catch (_) { return; }
 
+    _lastBridgeData = data;
 
-    // Last heartbeat timestamp
+    // Expose slice/order data so fetchCombinedQueue can use it without re-fetching
+    cachedBridgeSlices = data.slices || [];
+    if (!dragSrcId) cachedQueueOrder = data.queueOrder || [];
+
+    // Fingerprint guard — skip expensive DOM rebuild if nothing changed
+    const fp = _bridgeFingerprint(data);
+    const changed = fp !== _lastBridgeFingerprint;
+    _lastBridgeFingerprint = fp;
+
+    // Last heartbeat timestamp (always update — cheap)
     const hbEl = document.getElementById('last-heartbeat');
     if (hbEl && data.heartbeat.ts) {
       const d = new Date(data.heartbeat.ts);
@@ -3542,11 +3560,13 @@
       hbEl.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
 
-    // History panel — row-based with chevron expand + legacy compat
-    renderHistoryPanel(data.recent ?? [], data.events ?? []);
+    if (changed) {
+      // History panel — row-based with chevron expand + legacy compat
+      renderHistoryPanel(data.recent ?? [], data.events ?? []);
 
-    // Nog active state
-    updateNogLane(data.nogActive ?? null, data.events ?? []);
+      // Nog active state
+      updateNogLane(data.nogActive ?? null, data.events ?? []);
+    }
 
     // API retry toasts
     processApiRetries(data.apiRetries ?? []);
@@ -4259,8 +4279,14 @@
   startElapsedTick();
   updateServicesPanel();
   setInterval(updateServicesPanel, 15000);
+  async function pollAll() {
+    await fetchBridge();
+    await fetchCombinedQueue();
+  }
+
   fetchBridge();
-  setInterval(fetchBridge, 5000);
+  fetchCombinedQueue();
+  setInterval(pollAll, 5000);
 
   // ── Combined Queue panel ─────────────────────────────────────────────────────
   // Merges staged items and accepted (PENDING) items into one list.
@@ -4269,6 +4295,8 @@
   let cachedBridgeSlices = [];
   let cachedQueueOrder = [];
   let cachedStagedOrder = [];
+  let _lastBridgeData = null;
+  let _lastBridgeFingerprint = '';
   let dragSrcId = null;
   let _pendingEnterIds = new Set();
 
@@ -4989,23 +5017,15 @@
   // ── Combined fetch ─────────────────────────────────────────────────────────
   async function fetchCombinedQueue() {
     try {
-      const [stagedRes, bridgeRes] = await Promise.all([
-        fetch('/api/bridge/staged'),
-        fetch('/api/bridge'),
-      ]);
-      let bridgeData = null;
-      if (bridgeRes.ok) {
-        bridgeData = await bridgeRes.json();
-        cachedBridgeSlices = bridgeData.slices || [];
-        if (!dragSrcId) {
-          cachedQueueOrder = bridgeData.queueOrder || [];
-        }
-      }
+      // Use bridge data already fetched by fetchBridge — no second /api/bridge call
+      const bridgeData = _lastBridgeData;
+
+      const stagedRes = await fetch('/api/bridge/staged');
       if (stagedRes.ok) {
         cachedStagedItems = await stagedRes.json();
         stagedItemCount = cachedStagedItems.filter(i => i.status !== 'NEEDS_APENDMENT').length;
-        if (!dragSrcId) {
-          const serverStagedOrder = bridgeData && bridgeData.stagedOrder ? bridgeData.stagedOrder : [];
+        if (!dragSrcId && bridgeData) {
+          const serverStagedOrder = bridgeData.stagedOrder ? bridgeData.stagedOrder : [];
           const currentStagedIds = cachedStagedItems
             .filter(i => i.status !== 'NEEDS_APENDMENT')
             .map(i => i.id);
@@ -5020,9 +5040,6 @@
       renderQueueList();
     } catch (_) {}
   }
-
-  fetchCombinedQueue();
-  setInterval(fetchCombinedQueue, 5000);
 
   // ── Slice Investigation Panel ──────────────────────────────────────────────
   let invPanelOpen = false;
