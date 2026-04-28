@@ -840,6 +840,23 @@
     font-family: system-ui, -apple-system, sans-serif;
   }
 
+  .history-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg-subtle, #f9fafb);
+    border-top: 1px solid var(--border, #e5e7eb);
+    font-size: 11px;
+    color: var(--ink-4, #94a3b8);
+  }
+  .history-archive-link {
+    color: var(--info, #1d4ed8);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .history-archive-link:hover { text-decoration: underline; }
+
   /* ── HISTORY SLICING DETAIL OVERLAY ──────────────── */
   .history-detail-overlay {
     position: fixed;
@@ -2866,6 +2883,10 @@
         </div>
         <div class="history-list" id="history-list"></div>
         <div id="history-pagination" class="hidden"></div>
+        <div class="history-footer" id="history-footer" style="display:none">
+          <span id="history-footer-count"></span>
+          <a class="history-archive-link" id="history-archive-link" href="#"></a>
+        </div>
       </div>
     </div>
 
@@ -4002,6 +4023,27 @@
     } else {
       pageEl.classList.add('hidden');
       pageEl.innerHTML = '';
+    }
+
+    // History footer: count summary + archive link
+    const footerEl = document.getElementById('history-footer');
+    if (footerEl) {
+      const acceptedCount = cachedHistoryAllRows.filter(r =>
+        r._terminalOutcome === 'MERGED' || r._terminalOutcome === 'ACCEPTED'
+      ).length;
+      if (acceptedCount > 0) {
+        footerEl.style.display = '';
+        document.getElementById('history-footer-count').textContent = `${acceptedCount} slices accepted`;
+        const archiveLink = document.getElementById('history-archive-link');
+        if (acceptedCount > 5) {
+          archiveLink.style.display = '';
+          archiveLink.textContent = `Open archive (${acceptedCount - 5} more)`;
+        } else {
+          archiveLink.style.display = 'none';
+        }
+      } else {
+        footerEl.style.display = 'none';
+      }
     }
   }
 
