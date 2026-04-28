@@ -1101,7 +1101,7 @@ const server = http.createServer(async (req, res) => {
 
     // Last lock-cycle duration from register
     let lastLockCycleDuration = null;
-    const regTail = _readRegisterTail(REGISTER, 50, e => e.event && e.event.startsWith('gate-'));
+    const regTail = _readRegisterTail(REGISTER, 50, e => e.event && (e.event.startsWith('gate-') || e.event === 'lock-cycle'));
     const lockEvents = regTail.filter(e => e.event === 'lock-cycle');
     if (lockEvents.length > 0) {
       lastLockCycleDuration = lockEvents[lockEvents.length - 1].held_duration_ms || null;

@@ -99,24 +99,8 @@ function makeDeps() {
 }
 
 // ---------------------------------------------------------------------------
-// Fresh require with patched paths
+// Fresh require with patched paths — uses real module paths with cleanup
 // ---------------------------------------------------------------------------
-
-// We need to patch the gate-mutex module's file paths to use our tmp dir.
-// Since gate-mutex uses path.resolve(__dirname, ...) for MUTEX_PATH and
-// BRANCH_STATE_PATH, we'll directly manipulate the files at those paths
-// OR use a fresh approach: patch the module's exported constants won't work
-// since they're strings. Instead, we'll work with the module's actual paths
-// and restore after.
-
-// For isolated tests, we'll re-require with overridden paths.
-// Since gate-mutex hardcodes paths relative to __dirname, we'll use a
-// different strategy: create symlinks or just test at the actual paths
-// with careful cleanup.
-
-// Actually, the simplest reliable approach: use the real module paths but
-// with careful setup/cleanup. The existing test (state-gate-mutex.test.js)
-// does exactly this.
 
 const gateMutex = require('../state/gate-mutex');
 const telemetry = require('../state/gate-telemetry');
@@ -216,15 +200,11 @@ describe('Gate recovery integration tests', () => {
 
     assert.equal(realMutexExists(), false, 'mutex should be deleted');
 
-    // Check telemetry event
+    // Check telemetry event (gate-telemetry is sole gate writer — no legacy registerEvent)
     const telEvents = readTelemetryEvents();
     const orphanEvt = telEvents.find(e => e.event === 'gate-mutex-orphan-recovered');
     assert.ok(orphanEvt, 'should emit gate-mutex-orphan-recovered');
     assert.equal(orphanEvt.recovery_signal, 'heartbeat-stale');
-
-    // Check legacy register event
-    const aborted = events.find(e => e.event === 'GATE_ABORTED');
-    assert.ok(aborted, 'should emit GATE_ABORTED via registerEvent');
   });
 
   // 2. Orphaned mutex via missing heartbeat file
@@ -330,37 +310,16 @@ describe('Gate recovery integration tests', () => {
     };
     fs.writeFileSync(REAL_BRANCH_STATE_PATH, JSON.stringify(branchState, null, 2) + '\n');
 
-    const drainOrder = [];
-    const { deps } = makeDeps();
-
-    // drainDeferredSlices calls squashSliceToDev which throws (stub).
-    // We catch and record the order.
-    try {
-      gateMutex.drainDeferredSlices(deps);
-    } catch (_) { /* expected — stub throws */ }
-
-    // The drain attempts in order. Since squashSliceToDev throws, it stops at first.
-    // Check the log to see which slice it tried first.
-    const drainLog = deps.log.call ? [] : makeDeps().logs; // re-check
-    // Actually, the drain function calls squashSliceToDev which throws, and the
-    // catch block logs and breaks. So only the first slice is attempted.
-    // The first in FIFO order should be id=300 (earliest accepted_ts).
-    const warnLogs = [];
-    const logFn = deps.log;
-    // We need to re-run with our own log capture
-    const events2 = [];
-    const logs2 = [];
-    const deps2 = {
-      registerEvent(id, event, extra) { events2.push({ id, event, ...extra }); },
-      log(level, tag, data) { logs2.push({ level, tag, ...data }); },
+    const logs = [];
+    const deps = {
+      registerEvent() {},
+      log(level, tag, data) { logs.push({ level, tag, ...data }); },
     };
 
-    // Restore branch state for the re-run
-    fs.writeFileSync(REAL_BRANCH_STATE_PATH, JSON.stringify(branchState, null, 2) + '\n');
-    gateMutex.drainDeferredSlices(deps2);
+    gateMutex.drainDeferredSlices(deps);
 
     // squashSliceToDev throws for slice 300 first (earliest accepted_ts)
-    const failLog = logs2.find(l => l.msg && l.msg.includes('squashSliceToDev failed'));
+    const failLog = logs.find(l => l.msg && l.msg.includes('squashSliceToDev failed'));
     assert.ok(failLog, 'should have a drain failure log');
     assert.ok(failLog.msg.includes('slice 300'), `first drain attempt should be slice 300 (earliest ts), got: ${failLog.msg}`);
   });
@@ -397,7 +356,7 @@ describe('Gate recovery integration tests', () => {
   });
 
   // 8. gate-state absent on startup — no gate section in branch-state.json
-  it('recovery scan handles missing gate section in branch-state.json', () => {
+  it('recovery scan initializes gate section to IDLE when absent', () => {
     // Write branch-state without gate section
     const branchState = {
       schema_version: 1,
@@ -408,33 +367,25 @@ describe('Gate recovery integration tests', () => {
     };
     fs.writeFileSync(REAL_BRANCH_STATE_PATH, JSON.stringify(branchState, null, 2) + '\n');
 
-    // The recovery scan (reconcileBranchState) is in branch-state-recovery.js.
-    // For this test, we verify that recoverGateMutex handles the absence gracefully
-    // (no mutex file = nothing to do) and the state-doctor can read it.
-    const { deps } = makeDeps();
     // recoverGateMutex should not throw when gate section is absent
+    const { deps } = makeDeps();
     gateMutex.recoverGateMutex(deps);
 
-    // Also verify branch-state-recovery handles it
+    // Verify branch-state-recovery initializes the gate section
     const recovery = require('../state/branch-state-recovery');
+    const events = [];
     const recDeps = {
-      registerEvent() {},
+      registerEvent(id, event, extra) { events.push({ id, event, ...extra }); },
       log() {},
       runGit() { return ''; },
     };
-    // Should not throw
-    try {
-      recovery.reconcileBranchState(recDeps);
-    } catch (_) {
-      // reconcileBranchState may fail for other reasons (git) but should not
-      // crash on missing gate section. We just verify no exception about gate.
-    }
+    recovery.reconcileBranchState(recDeps);
 
-    // Read back — gate section should have been initialized
+    // Read back — gate section should have been initialized to IDLE
     const afterState = JSON.parse(fs.readFileSync(REAL_BRANCH_STATE_PATH, 'utf-8'));
-    // If recovery initialized it, great. If not, at least it didn't crash.
-    // The key invariant: no throw on missing gate section.
-    assert.ok(true, 'no crash on missing gate section');
+    assert.ok(afterState.gate, 'gate section should exist after recovery');
+    assert.equal(afterState.gate.status, 'IDLE', 'gate status should be initialized to IDLE');
+    assert.equal(afterState.gate.current_run, null, 'gate current_run should be null');
   });
 
   // 9. branch-state.json corrupt

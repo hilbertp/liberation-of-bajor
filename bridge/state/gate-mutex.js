@@ -54,7 +54,6 @@ function acquireGateMutex(devTipSha, bashirPid, heartbeatPath, { registerEvent, 
     bashir_heartbeat_path: heartbeatPath,
     started_ts: payload.started_ts,
   });
-  registerEvent('0', 'GATE_MUTEX_ACQUIRED', { dev_tip_sha: devTipSha, bashir_pid: bashirPid });
   return { ok: true };
 }
 
@@ -80,7 +79,6 @@ function releaseGateMutex(reason, { registerEvent, log }) {
     log('warn', 'gate_mutex', { msg: 'releaseGateMutex: mutex file already absent', error: err.message });
   }
   emit('gate-mutex-released', { reason, held_duration_ms: heldDurationMs });
-  registerEvent('0', 'GATE_MUTEX_RELEASED', { reason });
   drainDeferredSlices({ registerEvent, log });
 }
 
@@ -207,10 +205,6 @@ function _abortOrphan(recoverySignal, { registerEvent, log }) {
     recovery_signal: recoverySignal,
     held_duration_ms: heldDurationMs,
     last_heartbeat_age_ms: lastHeartbeatAgeMs,
-  });
-  registerEvent('0', 'GATE_ABORTED', {
-    reason: 'orchestrator_restart_during_gate',
-    source: recoverySignal,
   });
   log('warn', 'gate_mutex', { msg: 'orphan gate detected, aborting and draining' });
   try {
