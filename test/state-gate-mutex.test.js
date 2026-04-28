@@ -45,9 +45,25 @@ function test(name, fn) {
 // ---------------------------------------------------------------------------
 
 const gateMutex = require('../bridge/state/gate-mutex');
+const telemetry = require('../bridge/state/gate-telemetry');
 
 const MUTEX_PATH = path.resolve(__dirname, '..', 'bridge', 'state', 'gate-running.json');
 const BRANCH_STATE_PATH = path.resolve(__dirname, '..', 'bridge', 'state', 'branch-state.json');
+const TEST_REGISTER = path.resolve(__dirname, '..', 'bridge', 'state', 'test-register-mutex.jsonl');
+
+// Point gate-telemetry at a test-local register file
+telemetry.setRegisterPath(TEST_REGISTER);
+
+function readTelemetryEvents() {
+  try {
+    return fs.readFileSync(TEST_REGISTER, 'utf-8')
+      .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
+  } catch (_) { return []; }
+}
+
+function clearTelemetry() {
+  try { fs.unlinkSync(TEST_REGISTER); } catch (_) {}
+}
 
 // Save original branch-state.json content
 const originalBranchState = fs.readFileSync(BRANCH_STATE_PATH, 'utf-8');
@@ -59,6 +75,8 @@ function cleanup() {
   fs.writeFileSync(BRANCH_STATE_PATH, originalBranchState, 'utf-8');
   // Remove any heartbeat test files
   try { fs.unlinkSync(path.resolve(__dirname, '..', 'bridge', 'state', 'bashir-heartbeat.json')); } catch (_) {}
+  // Clear telemetry register
+  clearTelemetry();
 }
 
 // Event/log capture helpers
@@ -98,10 +116,12 @@ test('acquire happy path: file appears, GATE_MUTEX_ACQUIRED event fires', () => 
   assert.strictEqual(content.bashir_heartbeat_path, 'bridge/state/bashir-heartbeat.json');
   assert.ok(content.started_ts);
 
-  assert.strictEqual(events.length, 1);
-  assert.strictEqual(events[0].event, 'GATE_MUTEX_ACQUIRED');
-  assert.strictEqual(events[0].dev_tip_sha, 'abc123');
-  assert.strictEqual(events[0].bashir_pid, 12345);
+  // gate-telemetry emits gate-mutex-acquired (not via registerEvent)
+  const telEvents = readTelemetryEvents();
+  const acquired = telEvents.find(e => e.event === 'gate-mutex-acquired');
+  assert.ok(acquired, 'Expected gate-mutex-acquired telemetry event');
+  assert.strictEqual(acquired.dev_tip_sha, 'abc123');
+  assert.strictEqual(acquired.bashir_pid, 12345);
 
   cleanup();
 });
@@ -138,9 +158,11 @@ test('release happy path: file deleted, GATE_MUTEX_RELEASED event fires, drain r
   gateMutex.releaseGateMutex('regression_pass', deps);
 
   assert.strictEqual(fs.existsSync(MUTEX_PATH), false);
-  assert.strictEqual(events.length, 1);
-  assert.strictEqual(events[0].event, 'GATE_MUTEX_RELEASED');
-  assert.strictEqual(events[0].reason, 'regression_pass');
+  // gate-telemetry emits gate-mutex-released (not via registerEvent)
+  const telEvents = readTelemetryEvents();
+  const released = telEvents.find(e => e.event === 'gate-mutex-released');
+  assert.ok(released, 'Expected gate-mutex-released telemetry event');
+  assert.strictEqual(released.reason, 'regression_pass');
 
   cleanup();
 });
@@ -237,11 +259,11 @@ test('recovery orphan: mutex present, heartbeat stale → GATE_ABORTED, mutex de
 
   // Mutex should be deleted
   assert.strictEqual(fs.existsSync(MUTEX_PATH), false);
-  // GATE_ABORTED event fired
-  const abortEvent = events.find(e => e.event === 'GATE_ABORTED');
-  assert.ok(abortEvent, 'Expected GATE_ABORTED event');
-  assert.strictEqual(abortEvent.reason, 'orchestrator_restart_during_gate');
-  assert.strictEqual(abortEvent.source, 'heartbeat-stale');
+  // gate-telemetry emits gate-mutex-orphan-recovered
+  const telEvents = readTelemetryEvents();
+  const orphanEvt = telEvents.find(e => e.event === 'gate-mutex-orphan-recovered');
+  assert.ok(orphanEvt, 'Expected gate-mutex-orphan-recovered telemetry event');
+  assert.strictEqual(orphanEvt.recovery_signal, 'heartbeat-stale');
 
   cleanup();
 });
@@ -261,11 +283,12 @@ test('recovery missing-heartbeat: mutex present, no heartbeat file → treated a
   const { deps, events } = makeDeps();
   gateMutex.recoverGateMutex(deps);
 
-  // Same as stale: mutex deleted, GATE_ABORTED
+  // Same as stale: mutex deleted, orphan-recovered event emitted
   assert.strictEqual(fs.existsSync(MUTEX_PATH), false);
-  const abortEvent = events.find(e => e.event === 'GATE_ABORTED');
-  assert.ok(abortEvent, 'Expected GATE_ABORTED event');
-  assert.strictEqual(abortEvent.reason, 'orchestrator_restart_during_gate');
+  const telEvents = readTelemetryEvents();
+  const orphanEvt = telEvents.find(e => e.event === 'gate-mutex-orphan-recovered');
+  assert.ok(orphanEvt, 'Expected gate-mutex-orphan-recovered telemetry event');
+  assert.strictEqual(orphanEvt.recovery_signal, 'process-gone');
 
   cleanup();
 });
