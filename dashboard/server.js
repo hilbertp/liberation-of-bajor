@@ -109,6 +109,23 @@ function getCachedDir(dirPath, fileFilter, fileParser) {
   return { files: dirEntry.files, parsed };
 }
 
+// ── Register tail reader (gate-health, slice 260) ──────────────────────────
+function _readRegisterTail(regPath, count, filter) {
+  try {
+    const raw = fs.readFileSync(regPath, 'utf-8').trim();
+    if (!raw) return [];
+    const lines = raw.split('\n');
+    const result = [];
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (!filter || filter(obj)) result.push(obj);
+      } catch (_) { /* skip malformed */ }
+    }
+    return result.slice(-count);
+  } catch (_) { return []; }
+}
+
 // Legacy file suffix (pre-D3 backward compat — files may still exist on disk)
 const LEGACY_NEEDS_SUFFIX = '-NEEDS_' + 'AMEND' + 'MENT.md';
 const LEGACY_VERDICT_REQ  = 'AMEND' + 'MENT_REQUIRED';
@@ -1057,6 +1074,52 @@ const server = http.createServer(async (req, res) => {
     } catch (_) {}
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', ts: new Date().toISOString(), watcher, wormhole, hostHealth }));
+    return;
+  }
+
+  // ── Gate Health endpoint (slice 260) ──────────────────────────────────────
+  if (pathname === '/api/gate-health' && req.method === 'GET') {
+    const { evaluateAlerts, computeHealthColor } = require(path.join(REPO_ROOT, 'bridge', 'state', 'gate-alerts'));
+    const STATE_DIR = path.join(REPO_ROOT, 'bridge', 'state');
+    const mutexPath = path.join(STATE_DIR, 'gate-running.json');
+    const bashirHbPath = path.join(STATE_DIR, 'bashir-heartbeat.json');
+
+    // Read mutex state
+    let mutexState = null;
+    try { mutexState = JSON.parse(fs.readFileSync(mutexPath, 'utf8')); } catch (_) {}
+
+    // Read heartbeat
+    let heartbeatAge = null;
+    let heartbeatExists = false;
+    try {
+      const hb = JSON.parse(fs.readFileSync(bashirHbPath, 'utf8'));
+      heartbeatExists = true;
+      if (hb.ts) heartbeatAge = Date.now() - new Date(hb.ts).getTime();
+    } catch (err) {
+      if (err.code !== 'ENOENT') heartbeatExists = true; // exists but unreadable
+    }
+
+    // Last lock-cycle duration from register
+    let lastLockCycleDuration = null;
+    const regTail = _readRegisterTail(REGISTER, 50, e => e.event && e.event.startsWith('gate-'));
+    const lockEvents = regTail.filter(e => e.event === 'lock-cycle');
+    if (lockEvents.length > 0) {
+      lastLockCycleDuration = lockEvents[lockEvents.length - 1].held_duration_ms || null;
+    }
+
+    const alerts = evaluateAlerts({ mutexState, heartbeatAge, heartbeatExists, recentEvents: regTail });
+    const color = computeHealthColor(alerts);
+    const last5 = regTail.slice(-5);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      color,
+      mutex: mutexState ? { present: true, started_ts: mutexState.started_ts, dev_tip_sha: mutexState.dev_tip_sha } : { present: false },
+      heartbeat: { exists: heartbeatExists, age_ms: heartbeatAge },
+      last_lock_cycle_duration_ms: lastLockCycleDuration,
+      alerts,
+      recent_events: last5,
+    }));
     return;
   }
 

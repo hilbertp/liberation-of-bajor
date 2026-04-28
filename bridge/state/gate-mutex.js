@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { writeJsonAtomic } = require('./atomic-write');
+const { emit } = require('./gate-telemetry');
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,6 +48,12 @@ function acquireGateMutex(devTipSha, bashirPid, heartbeatPath, { registerEvent, 
   };
 
   writeJsonAtomic(MUTEX_PATH, payload);
+  emit('gate-mutex-acquired', {
+    dev_tip_sha: devTipSha,
+    bashir_pid: bashirPid,
+    bashir_heartbeat_path: heartbeatPath,
+    started_ts: payload.started_ts,
+  });
   registerEvent('0', 'GATE_MUTEX_ACQUIRED', { dev_tip_sha: devTipSha, bashir_pid: bashirPid });
   return { ok: true };
 }
@@ -59,11 +66,20 @@ function acquireGateMutex(devTipSha, bashirPid, heartbeatPath, { registerEvent, 
  * Triggers drainDeferredSlices() after release.
  */
 function releaseGateMutex(reason, { registerEvent, log }) {
+  let heldDurationMs = null;
+  try {
+    const mutex = JSON.parse(fs.readFileSync(MUTEX_PATH, 'utf-8'));
+    if (mutex.started_ts) {
+      heldDurationMs = Date.now() - new Date(mutex.started_ts).getTime();
+    }
+  } catch (_) { /* mutex already gone or unreadable — best effort */ }
+
   try {
     fs.unlinkSync(MUTEX_PATH);
   } catch (err) {
     log('warn', 'gate_mutex', { msg: 'releaseGateMutex: mutex file already absent', error: err.message });
   }
+  emit('gate-mutex-released', { reason, held_duration_ms: heldDurationMs });
   registerEvent('0', 'GATE_MUTEX_RELEASED', { reason });
   drainDeferredSlices({ registerEvent, log });
 }
@@ -143,20 +159,23 @@ function recoverGateMutex({ registerEvent, log }) {
     mutex = JSON.parse(fs.readFileSync(MUTEX_PATH, 'utf-8'));
   } catch (err) {
     log('warn', 'gate_mutex', { msg: 'recoverGateMutex: corrupt mutex file, treating as orphan', error: err.message });
-    _abortOrphan({ registerEvent, log });
+    _abortOrphan('process-gone', { registerEvent, log });
     return;
   }
 
   const heartbeatPath = mutex.bashir_heartbeat_path;
   let heartbeatFresh = false;
+  let heartbeatReadable = false;
 
   try {
     const hb = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', heartbeatPath), 'utf-8'));
+    heartbeatReadable = true;
     const age = Date.now() - new Date(hb.ts).getTime();
     heartbeatFresh = age < HEARTBEAT_ORPHAN_THRESHOLD_MS;
   } catch (_) {
     // Missing or unreadable heartbeat file → stale
     heartbeatFresh = false;
+    heartbeatReadable = false;
   }
 
   if (heartbeatFresh) {
@@ -164,13 +183,34 @@ function recoverGateMutex({ registerEvent, log }) {
     return;
   }
 
-  _abortOrphan({ registerEvent, log });
+  const signal = heartbeatReadable ? 'heartbeat-stale' : 'process-gone';
+  _abortOrphan(signal, { registerEvent, log });
 }
 
-function _abortOrphan({ registerEvent, log }) {
+function _abortOrphan(recoverySignal, { registerEvent, log }) {
+  let heldDurationMs = null;
+  let lastHeartbeatAgeMs = null;
+  try {
+    const mutex = JSON.parse(fs.readFileSync(MUTEX_PATH, 'utf-8'));
+    if (mutex.started_ts) {
+      heldDurationMs = Date.now() - new Date(mutex.started_ts).getTime();
+    }
+    if (mutex.bashir_heartbeat_path) {
+      try {
+        const hb = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', '..', mutex.bashir_heartbeat_path), 'utf-8'));
+        if (hb.ts) lastHeartbeatAgeMs = Date.now() - new Date(hb.ts).getTime();
+      } catch (_) { /* heartbeat missing or unreadable */ }
+    }
+  } catch (_) { /* mutex unreadable */ }
+
+  emit('gate-mutex-orphan-recovered', {
+    recovery_signal: recoverySignal,
+    held_duration_ms: heldDurationMs,
+    last_heartbeat_age_ms: lastHeartbeatAgeMs,
+  });
   registerEvent('0', 'GATE_ABORTED', {
     reason: 'orchestrator_restart_during_gate',
-    source: 'heartbeat_stale',
+    source: recoverySignal,
   });
   log('warn', 'gate_mutex', { msg: 'orphan gate detected, aborting and draining' });
   try {

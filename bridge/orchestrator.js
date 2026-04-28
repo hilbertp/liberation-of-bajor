@@ -10,6 +10,7 @@ const { translateEvent, translateVerdict, resetDedupeState } = require('./lifecy
 const gitFinalizer = require('./git-finalizer');
 const { reconcileBranchState } = require('./state/branch-state-recovery');
 const { recoverGateMutex } = require('./state/gate-mutex');
+const { emit: emitGateTelemetry } = require('./state/gate-telemetry');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -1342,7 +1343,9 @@ function ensureMainIsFresh(id) {
   // ── Layer 2 enforcement: unlock source paths before git mutations, re-lock after ──
   const unlockScript = path.join(PROJECT_DIR, 'scripts', 'unlock-main.sh');
   const lockScript   = path.join(PROJECT_DIR, 'scripts', 'lock-main.sh');
+  const unlockStart = Date.now();
   try { execSync(`bash "${unlockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+  emitGateTelemetry('lock-cycle', { cycle_phase: 'unlock', triggering_op: 'dev-to-main', held_duration_ms: Date.now() - unlockStart });
 
   try {
     if (aheadCount > 0 && behindCount === 0) {
@@ -1359,7 +1362,9 @@ function ensureMainIsFresh(id) {
       log('info', 'git_safety', { id, msg: `Fast-forwarded main: ${local.slice(0, 8)} → ${after.slice(0, 8)}` });
     }
   } finally {
+    const relockStart = Date.now();
     try { execSync(`bash "${lockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+    emitGateTelemetry('lock-cycle', { cycle_phase: 'relock', triggering_op: 'dev-to-main', held_duration_ms: Date.now() - relockStart });
   }
 }
 
@@ -2788,7 +2793,9 @@ function mergeBranch(id, branchName, title) {
   // ── Layer 2 enforcement: unlock source paths before merge, re-lock after ──
   const unlockScript = path.join(PROJECT_DIR, 'scripts', 'unlock-main.sh');
   const lockScript   = path.join(PROJECT_DIR, 'scripts', 'lock-main.sh');
+  const mergeUnlockStart = Date.now();
   try { execSync(`bash "${unlockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+  emitGateTelemetry('lock-cycle', { cycle_phase: 'unlock', triggering_op: 'squash-to-dev', held_duration_ms: Date.now() - mergeUnlockStart });
 
   // Set DS9_WATCHER_MERGE so the pre-commit hook (Layer 1) allows this path.
   process.env.DS9_WATCHER_MERGE = '1';
@@ -2882,7 +2889,9 @@ function mergeBranch(id, branchName, title) {
   } finally {
     // Always re-lock and clear the env var, even on failure.
     delete process.env.DS9_WATCHER_MERGE;
+    const mergeRelockStart = Date.now();
     try { execSync(`bash "${lockScript}"`, { cwd: PROJECT_DIR, stdio: 'pipe' }); } catch (_) {}
+    emitGateTelemetry('lock-cycle', { cycle_phase: 'relock', triggering_op: 'squash-to-dev', held_duration_ms: Date.now() - mergeRelockStart });
   }
 }
 

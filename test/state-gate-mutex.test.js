@@ -241,7 +241,7 @@ test('recovery orphan: mutex present, heartbeat stale → GATE_ABORTED, mutex de
   const abortEvent = events.find(e => e.event === 'GATE_ABORTED');
   assert.ok(abortEvent, 'Expected GATE_ABORTED event');
   assert.strictEqual(abortEvent.reason, 'orchestrator_restart_during_gate');
-  assert.strictEqual(abortEvent.source, 'heartbeat_stale');
+  assert.strictEqual(abortEvent.source, 'heartbeat-stale');
 
   cleanup();
 });

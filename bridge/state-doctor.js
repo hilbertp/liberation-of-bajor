@@ -304,10 +304,110 @@ function render(state, anomalies) {
 }
 
 // ---------------------------------------------------------------------------
+// Gate Health subcommand (slice 260)
+// ---------------------------------------------------------------------------
+
+function gateHealth() {
+  const { evaluateAlerts, computeHealthColor } = require('./state/gate-alerts');
+
+  const mutexPath = path.join(STATE_DIR, 'gate-running.json');
+  const bashirHbPath = path.join(STATE_DIR, 'bashir-heartbeat.json');
+  const registerPath = path.join(REPO_ROOT, 'bridge', 'register.jsonl');
+
+  const mutexResult = readJson(mutexPath);
+  const mutexState = mutexResult.data;
+
+  let heartbeatAge = null;
+  let heartbeatExists = false;
+  const hbResult = readJson(bashirHbPath);
+  if (hbResult.exists && !hbResult.error && hbResult.data) {
+    heartbeatExists = true;
+    if (hbResult.data.ts) heartbeatAge = ageMs(hbResult.data.ts);
+  } else if (hbResult.exists) {
+    heartbeatExists = true;
+  }
+
+  const gateEventTypes = ['gate-mutex-acquired', 'gate-mutex-released', 'gate-mutex-orphan-recovered',
+    'gate-deferred-squash', 'gate-drain-completed', 'gate-state-transition', 'gate-state-reinitialized', 'lock-cycle'];
+  const recentEvents = readLastRegisterEvents(registerPath, 20,
+    e => gateEventTypes.includes(e.event));
+  const last5 = recentEvents.slice(-5);
+
+  const alerts = evaluateAlerts({ mutexState, heartbeatAge, heartbeatExists, recentEvents });
+  const color = computeHealthColor(alerts);
+
+  const lines = [];
+  const W = 22;
+  lines.push('='.repeat(60));
+  lines.push('  GATE HEALTH');
+  lines.push('='.repeat(60));
+  lines.push('');
+
+  lines.push(`  ${pad('Overall', W)} ${color.toUpperCase()}`);
+  lines.push('');
+
+  lines.push('--- Mutex ---');
+  if (mutexState) {
+    lines.push(`  ${pad('Status', W)} HELD`);
+    if (mutexState.started_ts) lines.push(`  ${pad('Held since', W)} ${mutexState.started_ts} (${fmtAge(ageMs(mutexState.started_ts))})`);
+    if (mutexState.dev_tip_sha) lines.push(`  ${pad('Dev tip', W)} ${mutexState.dev_tip_sha.slice(0, 8)}`);
+    if (mutexState.bashir_pid) lines.push(`  ${pad('Bashir PID', W)} ${mutexState.bashir_pid}`);
+  } else {
+    lines.push(`  ${pad('Status', W)} (absent)`);
+  }
+  lines.push('');
+
+  lines.push('--- Heartbeat ---');
+  if (heartbeatExists && heartbeatAge != null) {
+    lines.push(`  ${pad('Age', W)} ${fmtAge(heartbeatAge)}`);
+  } else if (heartbeatExists) {
+    lines.push(`  ${pad('Status', W)} (unreadable)`);
+  } else {
+    lines.push(`  ${pad('Status', W)} (absent)`);
+  }
+  lines.push('');
+
+  lines.push('--- Recent Gate Events ---');
+  if (last5.length === 0) {
+    lines.push('  (no gate events found)');
+  } else {
+    for (const evt of last5) {
+      const ts = evt.ts || '';
+      const extra = [];
+      if (evt.recovery_signal) extra.push(`signal=${evt.recovery_signal}`);
+      if (evt.reason) extra.push(`reason=${evt.reason}`);
+      if (evt.cycle_phase) extra.push(`phase=${evt.cycle_phase}`);
+      if (evt.held_duration_ms != null) extra.push(`held=${evt.held_duration_ms}ms`);
+      lines.push(`  ${ts}  ${evt.event}${extra.length ? '  ' + extra.join(' ') : ''}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('--- Alerts ---');
+  if (alerts.length === 0) {
+    lines.push('  None.');
+  } else {
+    for (const a of alerts) {
+      lines.push(`  [${a.level.toUpperCase()}] ${a.message}`);
+    }
+  }
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 function main() {
+  const args = process.argv.slice(2);
+  if (args.includes('--gate-health')) {
+    const output = gateHealth();
+    process.stdout.write(output);
+    process.exit(0);
+  }
+
   const state = collectState();
   const anomalies = detectAnomalies(state);
   const output = render(state, anomalies);
@@ -316,7 +416,7 @@ function main() {
 }
 
 // Export internals for testing
-module.exports = { collectState, detectAnomalies, render, readJson, readText, fileExists, ageMs, STALE_THRESHOLD_MS };
+module.exports = { collectState, detectAnomalies, render, gateHealth, readJson, readText, fileExists, ageMs, STALE_THRESHOLD_MS };
 
 // Run if invoked directly
 if (require.main === module) {
