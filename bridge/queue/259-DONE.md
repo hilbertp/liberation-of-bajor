@@ -6,23 +6,31 @@ to: nog
 status: DONE
 slice_id: "259"
 branch: "slice/259"
-completed: "2026-04-28T19:25:00.000Z"
-tokens_in: 38000
-tokens_out: 8500
-elapsed_ms: 420000
-estimated_human_hours: 2.5
+completed: "2026-04-28T19:35:00.000Z"
+tokens_in: 12000
+tokens_out: 3500
+elapsed_ms: 180000
+estimated_human_hours: 0.15
 compaction_occurred: false
 ---
 
 ## Summary
 
-Implemented the Bashir-gate concurrency mutex (`bridge/state/gate-running.json`) with full lifecycle: acquire, release, drain, defer-check, and heartbeat-primary recovery on orchestrator restart.
+Amendment round 1: Addressed all Nog findings. Cleaned up `test/state-gate-mutex.test.js` by removing 5 unused variables and ~25 lines of stream-of-consciousness comments. No production code changes needed. All 9 tests still pass.
 
-## Deliverables
+## Nog round 1 fixes
+
+1. Removed unused `TEST_ROOT` variable and its `mkdirSync`/`rmSync` lifecycle.
+2. Removed `ORIGINAL_MUTEX_PATH` and `ORIGINAL_BRANCH_STATE_PATH` declarations.
+3. Removed `drainOrder`, `origModule`, and `origExports` unused variables.
+4. Removed ~25 lines of stream-of-consciousness comments explaining abandoned isolation/mocking approaches.
+5. Removed unused `os` import (only consumer was `TEST_ROOT`).
+
+Net: 43 lines deleted, 0 lines added.
+
+## Deliverables (unchanged from round 1)
 
 ### `bridge/state/gate-mutex.js` (196 LOC)
-
-Exports:
 
 | Function | Purpose |
 |---|---|
@@ -31,11 +39,6 @@ Exports:
 | `drainDeferredSlices(deps)` | Walks `branch-state.json.dev.deferred_slices` in FIFO order (by `accepted_ts`, tiebreak: numeric slice ID). Calls `squashSliceToDev(sliceId)` stub for each. Removes entries on success. |
 | `shouldDeferSquash()` | Returns `true` iff `gate-running.json` exists. |
 | `recoverGateMutex(deps)` | Startup recovery: checks heartbeat freshness. Fresh (< 90s) = resume. Stale/missing = emit `GATE_ABORTED`, delete mutex, drain. |
-
-### `bridge/orchestrator.js` (+2 LOC)
-
-- Added `require('./state/gate-mutex')` import.
-- Wired `recoverGateMutex({ registerEvent, log })` into startup sequence immediately after `reconcileBranchState()`.
 
 ### `test/state-gate-mutex.test.js` (9 scenarios, all passing)
 
@@ -51,22 +54,5 @@ Exports:
 
 ## Acceptance criteria
 
-- [x] AC0 — Skeleton DONE first commit.
-- [x] AC1 — Exports `acquireGateMutex`, `releaseGateMutex`, `drainDeferredSlices`, `shouldDeferSquash`.
-- [x] AC2 — `acquireGateMutex` writes schema via `writeJsonAtomic`, returns `already_held` if exists.
-- [x] AC3 — `releaseGateMutex` deletes file, emits event, triggers drain.
-- [x] AC4 — Drain walks FIFO by `accepted_ts` with numeric slice ID tiebreak.
-- [x] AC5 — `shouldDeferSquash` checks file existence.
-- [x] AC6 — Startup recovery after `reconcileBranchState()`, heartbeat-primary decision.
-- [x] AC7 — `HEARTBEAT_ORPHAN_THRESHOLD_MS = 90000` with ADR citation comment.
-- [x] AC8 — PID recorded in mutex but not used for recovery decision.
-- [x] AC9 — Nine regression tests, all passing.
-- [x] AC10 — 198 LOC excluding tests (under 350).
-- [x] AC11 — Changes only in `bridge/state/`, `bridge/orchestrator.js`, and test file.
-
-## Design notes
-
-- `squashSliceToDev(sliceId)` is a module-internal stub that throws `"not yet implemented"`. O'Brien's slice 4 replaces the body. Tests verify drain ordering by catching the first throw.
-- Heartbeat path is resolved from project root (`__dirname/../../<path>`) since the mutex stores paths relative to project root (e.g. `bridge/state/bashir-heartbeat.json`).
-- `fs.unlinkSync` used for mutex deletion per constraints (no atomic-rename for delete).
-- Drain breaks on first `squashSliceToDev` failure to avoid out-of-order squashes.
+- [x] AC0–AC11 — All satisfied (unchanged from round 1; production code untouched).
+- [x] All Nog findings addressed.
