@@ -3964,6 +3964,8 @@
       listEl.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:24px 0;font-size:14px">No completed slices yet.</div>';
       pageEl.classList.add('hidden');
       pageEl.innerHTML = '';
+      const ft = document.getElementById('history-footer');
+      if (ft) ft.style.display = 'none';
       return;
     }
 
