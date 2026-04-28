@@ -1712,6 +1712,8 @@
   }
 
   .queue-btn-accept {
+    -webkit-appearance: none;
+    appearance: none;
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -1721,9 +1723,9 @@
     font-weight: 500;
     cursor: pointer;
     white-space: nowrap;
-    border: 1px solid var(--ok);
+    border: 1px solid var(--ok, #16a34a);
     background: var(--bg-panel);
-    color: var(--ok);
+    color: var(--ok, #16a34a);
     transition: background 0.15s, color 0.15s;
   }
 
@@ -1732,6 +1734,8 @@
   }
 
   .queue-accepted-pill {
+    -webkit-appearance: none;
+    appearance: none;
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -1740,8 +1744,8 @@
     font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
-    border: 1px solid var(--ok);
-    background: var(--ok);
+    border: 1px solid var(--ok, #16a34a);
+    background: var(--ok, #16a34a);
     color: #ffffff;
     cursor: default;
     user-select: none;
@@ -1751,6 +1755,8 @@
   .queue-accepted-pill.clickable:hover { background: #fef3c7; color: #92400e; border-color: var(--warn-border); text-decoration: line-through; }
 
   .queue-btn-edit {
+    -webkit-appearance: none;
+    appearance: none;
     display: inline-flex;
     align-items: center;
     padding: 3px 10px;
@@ -1812,6 +1818,8 @@
   }
 
   .queue-btn-reject {
+    -webkit-appearance: none;
+    appearance: none;
     display: inline-flex;
     align-items: center;
     padding: 3px 10px;
