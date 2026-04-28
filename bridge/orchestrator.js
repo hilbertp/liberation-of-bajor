@@ -9,6 +9,7 @@ const { buildNogPrompt } = require('./nog-prompt');
 const { translateEvent, translateVerdict, resetDedupeState } = require('./lifecycle-translate');
 const gitFinalizer = require('./git-finalizer');
 const { reconcileBranchState } = require('./state/branch-state-recovery');
+const { recoverGateMutex } = require('./state/gate-mutex');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -5291,6 +5292,7 @@ if (require.main === module) {
   migrateArchivedToParked();
   restagedBootstrap();
   reconcileBranchState({ registerEvent, log, runGit: gitFinalizer.runGit });
+  recoverGateMutex({ registerEvent, log });
   backfillAcceptedFiles();
   backfillArchive();
   backfillBranches();
