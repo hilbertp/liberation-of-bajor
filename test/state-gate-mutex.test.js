@@ -20,7 +20,6 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const os = require('os');
 
 // ---------------------------------------------------------------------------
 // Test infrastructure
@@ -45,36 +44,7 @@ function test(name, fn) {
 // Isolation: patch module constants to use a temp directory
 // ---------------------------------------------------------------------------
 
-const TEST_ROOT = path.join(os.tmpdir(), `ds9-gate-mutex-test-${Date.now()}-${process.pid}`);
-fs.mkdirSync(TEST_ROOT, { recursive: true });
-
-// We need to monkey-patch the module paths before requiring gate-mutex.
-// Approach: require the module, then override the exported path constants.
-// gate-mutex.js uses MUTEX_PATH and BRANCH_STATE_PATH internally via the
-// module-level const, so we need a different approach — we'll create a
-// wrapper that re-wires the paths via a fresh require with a patched __dirname.
-
-// Simpler: just re-implement the test using the module's exports and manually
-// controlling the filesystem. We'll patch the module's constants directly
-// since they're simple string paths.
-
 const gateMutex = require('../bridge/state/gate-mutex');
-
-// Override paths to point at test root
-const ORIGINAL_MUTEX_PATH = gateMutex.MUTEX_PATH;
-const ORIGINAL_BRANCH_STATE_PATH = gateMutex.BRANCH_STATE_PATH;
-
-// Since the module uses path.resolve(__dirname, ...) internally and we can't
-// override that, let's use a different strategy: create a thin wrapper that
-// patches fs operations. Actually, the simplest approach is to create symlinks
-// or just test against the real paths in a controlled way.
-
-// Better approach: fork the module logic inline for testing, using the exported
-// functions which read MUTEX_PATH etc. We can't easily override const bindings.
-// Instead, let's manipulate the actual files at the real paths but in a safe way.
-
-// BEST approach: The module uses path.resolve(__dirname, ...) which resolves to
-// bridge/state/. We'll just create the test files there and clean up after.
 
 const MUTEX_PATH = path.resolve(__dirname, '..', 'bridge', 'state', 'gate-running.json');
 const BRANCH_STATE_PATH = path.resolve(__dirname, '..', 'bridge', 'state', 'branch-state.json');
@@ -190,19 +160,7 @@ test('drain FIFO ordering: deferred_slices sorted by accepted_ts', () => {
   fs.writeFileSync(BRANCH_STATE_PATH, JSON.stringify(state, null, 2) + '\n', 'utf-8');
 
   const { deps, logs } = makeDeps();
-  const drainOrder = [];
 
-  // Monkey-patch squashSliceToDev to record call order (it normally throws)
-  const origModule = require.cache[require.resolve('../bridge/state/gate-mutex')];
-  const origExports = { ...origModule.exports };
-
-  // We can't patch squashSliceToDev directly since it's a module-level function.
-  // The drain function calls squashSliceToDev which throws. We need to intercept.
-  // Since squashSliceToDev is internal, the test will see it throw and break.
-  // The brief says "Tests use a mock" — but we can't mock an internal function easily.
-  // Let's verify the ordering by checking which slice fails first (the stub throws).
-
-  // Actually, let's verify by catching the error and checking which id it tried first.
   gateMutex.drainDeferredSlices(deps);
 
   // squashSliceToDev throws for each — drain breaks on first failure.
@@ -332,7 +290,6 @@ test('shouldDeferSquash: returns true when mutex exists, false otherwise', () =>
 // ---------------------------------------------------------------------------
 
 cleanup();
-fs.rmSync(TEST_ROOT, { recursive: true, force: true });
 
 console.log(`\n  ${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);
