@@ -39,6 +39,13 @@ const VALID_EVENTS = new Set([
   'gate-state-transition',
   'gate-state-reinitialized',
   'lock-cycle',
+  // Ziyal §Gate states — UI-facing gate lifecycle events (slice 265+)
+  'gate-start',
+  'tests-updated',
+  'regression-pass',
+  'regression-fail',
+  'merge-complete',
+  'gate-abort',
 ]);
 
 // ---------------------------------------------------------------------------

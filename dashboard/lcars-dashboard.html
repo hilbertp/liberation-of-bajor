@@ -2093,6 +2093,27 @@
   .gate-status-pill.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-border); }
   .gate-status-pill.err  { background: var(--err-bg); color: var(--err); border: 1px solid var(--err-border); }
 
+  /* Gate step cards (slice 265) */
+  .gate-steps { display: flex; gap: 8px; padding: 8px 12px 4px; }
+  .gate-step-card {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    transition: background var(--motion-fast), border-color var(--motion-fast);
+  }
+  .gate-step-card .step-label { font-weight: 600; margin-bottom: 2px; }
+  .gate-step-card .step-body { color: var(--ink-4); font-size: 11px; }
+  .gate-step-card.active { border-color: var(--warn-border); background: var(--warn-bg); }
+  .gate-step-card.active .step-label::before { content: '\21BB '; }
+  .gate-step-card.done { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+  .gate-step-card.done .step-label::before { content: '\2713 '; }
+  .gate-step-card.error { border-color: var(--err-border); background: var(--err-bg); }
+  .gate-step-card.error .step-label::before { content: '\2717 '; }
+  .gate-steps-error { padding: 4px 12px; font-size: 12px; color: var(--err); }
+
   /* Collapsed mini strip */
   .topo-mini {
     display: none;
@@ -2894,6 +2915,12 @@
           <span class="topo-foot-stats" id="topo-foot-stats"></span>
           <span id="topo-foot-action"></span>
         </div>
+        <div class="gate-steps" id="gate-steps" style="display:none">
+          <div class="gate-step-card" id="gate-step-1"><div class="step-label">1. Run gate</div><div class="step-body" id="gate-step-1-body"></div></div>
+          <div class="gate-step-card" id="gate-step-2"><div class="step-label">2. Regression</div><div class="step-body" id="gate-step-2-body"></div></div>
+          <div class="gate-step-card" id="gate-step-3"><div class="step-label">3. Merge</div><div class="step-body" id="gate-step-3-body"></div></div>
+        </div>
+        <div class="gate-steps-error" id="gate-steps-error" style="display:none"></div>
       </div>
       <div class="topo-mini" id="topo-mini">
         <svg viewBox="0 0 280 32" width="280" height="32" role="img" aria-label="Branch topology collapsed">
@@ -4595,14 +4622,15 @@
       const hbAge = w ? w.heartbeatAge_s : null;
 
       // Detect batch-gate / paused state:
-      // 1. Explicit flag from watcher (placeholder — not yet in heartbeat payload)
-      // 2. Fall back to checking if the active slice is paused via register events
-      // TODO (slice 263): Override health pill to BATCH GATE when branch-state.gate.status === 'GATE_RUNNING'
-      // per Ziyal §Header health-pill spec. Requires gate-start handler from slice 263.
+      // 1. Check branch-state gate status (slice 265)
+      // 2. Explicit flag from watcher (placeholder — not yet in heartbeat payload)
+      // 3. Fall back to checking if the active slice is paused via register events
+      const bsGateRunning = _lastBranchState && _lastBranchState.gate
+                            && _lastBranchState.gate.status === 'GATE_RUNNING';
       const watcherPaused = w && w.paused;
       const activePaused  = w && w.currentSlice && typeof isSlicePaused === 'function'
                             && isSlicePaused(w.currentSlice);
-      const isBatchGate   = !!(watcherPaused || activePaused);
+      const isBatchGate   = !!(bsGateRunning || watcherPaused || activePaused);
 
       // Tri-state: BATCH GATE (amber) > OFFLINE (red) > ONLINE (green)
       let pillClass, pillText, dotCls;
@@ -5926,11 +5954,106 @@
     renderTopoMini(bs);
   }
 
-  function mergeButtonClick() {
+  // ── Gate step card animation state (slice 265) ─────────────────────────────
+  let _gateErrorTimeout = null;
+  let _prevGateStatus = null;
+
+  function showGateError(msg) {
+    const el = document.getElementById('gate-steps-error');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = '';
+    if (_gateErrorTimeout) clearTimeout(_gateErrorTimeout);
+    _gateErrorTimeout = setTimeout(() => { el.style.display = 'none'; }, 4000);
+  }
+
+  function resetStepCards() {
+    ['gate-step-1', 'gate-step-2', 'gate-step-3'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.className = 'gate-step-card';
+    });
+    ['gate-step-1-body', 'gate-step-2-body', 'gate-step-3-body'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = '';
+    });
+    const stepsEl = document.getElementById('gate-steps');
+    if (stepsEl) stepsEl.style.display = 'none';
+  }
+
+  function updateGateStepCards(gateStatus, gateData) {
+    const stepsEl = document.getElementById('gate-steps');
+    if (!stepsEl) return;
+
+    if (!gateStatus || gateStatus === 'IDLE' || gateStatus === 'ACCUMULATING') {
+      if (_prevGateStatus && _prevGateStatus !== 'IDLE' && _prevGateStatus !== 'ACCUMULATING') {
+        // Transition back to idle — reset after short delay for user to see final state
+        setTimeout(resetStepCards, 2000);
+      } else {
+        stepsEl.style.display = 'none';
+      }
+      _prevGateStatus = gateStatus;
+      return;
+    }
+
+    stepsEl.style.display = '';
+
+    if (gateStatus === 'GATE_RUNNING') {
+      const s1 = document.getElementById('gate-step-1');
+      if (s1) s1.className = 'gate-step-card active';
+      const s1b = document.getElementById('gate-step-1-body');
+      if (s1b) s1b.textContent = 'Running regression gate\u2026';
+    } else if (gateStatus === 'GATE_FAILED') {
+      const s1 = document.getElementById('gate-step-1');
+      if (s1) s1.className = 'gate-step-card done';
+      const s2 = document.getElementById('gate-step-2');
+      if (s2) s2.className = 'gate-step-card error';
+      const s2b = document.getElementById('gate-step-2-body');
+      if (s2b) {
+        const reason = gateData && gateData.last_failure ? 'Gate failed' : 'Regression failed';
+        s2b.textContent = reason;
+      }
+    } else if (gateStatus === 'GATE_ABORTED') {
+      resetStepCards();
+    }
+
+    _prevGateStatus = gateStatus;
+  }
+
+  async function mergeButtonClick() {
     const bs = _lastBranchState;
     const ahead = bs && bs.dev ? (bs.dev.commits_ahead_of_main || 0) : 0;
     if (ahead === 0) return;
-    console.log('gate-start placeholder — wired in slice 263');
+
+    // Disable button immediately
+    const btn = document.querySelector('.merge-btn');
+    if (btn) btn.disabled = true;
+
+    try {
+      const res = await fetch('/api/gate/start', { method: 'POST' });
+      if (res.status === 202) {
+        // Optimistic UI update: flip health pill to BATCH GATE
+        const pill = document.getElementById('ops-health-pill');
+        const label = document.getElementById('ops-health-label');
+        if (pill) pill.className = 'health-pill degraded';
+        if (label) label.textContent = 'BATCH GATE';
+
+        // Show step 1 active immediately
+        updateGateStepCards('GATE_RUNNING', null);
+
+        // Force a branch-state refresh to pick up GATE_RUNNING
+        fetchBranchState();
+      } else if (res.status === 409) {
+        const err = await res.json();
+        showGateError(err.error === 'nothing-to-gate' ? 'Nothing to gate — no commits ahead' : `Gate unavailable: ${err.status || err.error}`);
+        if (btn) btn.disabled = false;
+      } else {
+        showGateError('Gate start failed');
+        if (btn) btn.disabled = false;
+      }
+    } catch (err) {
+      showGateError('Network error');
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function fetchBranchState() {
@@ -5944,6 +6067,22 @@
       if (!res.ok) return;
       const data = await res.json();
       renderBranchTopology(data);
+
+      // Update gate step cards based on branch-state
+      const gateStatus = data.gate ? data.gate.status : null;
+      updateGateStepCards(gateStatus, data.gate);
+
+      // Health pill BATCH GATE override (slice 265)
+      const pill = document.getElementById('ops-health-pill');
+      const label = document.getElementById('ops-health-label');
+      if (pill && label) {
+        if (gateStatus === 'GATE_RUNNING') {
+          pill.className = 'health-pill degraded';
+          label.textContent = 'BATCH GATE';
+        } else if (_prevGateStatus === 'GATE_RUNNING' && gateStatus !== 'GATE_RUNNING') {
+          // Gate ended — let the regular health poll restore the pill
+        }
+      }
     } catch (_) {
       renderBranchTopology({ error: 'fetch-failed' });
     }
@@ -5952,16 +6091,6 @@
   // Initial fetch + 5s polling
   fetchBranchState();
   setInterval(fetchBranchState, 5000);
-
-  // EventSource placeholder for branch-state changes (slice 262)
-  // The events.jsonl file may not exist yet — log and do not retry aggressively.
-  (function() {
-    try {
-      // No SSE endpoint exists yet; when slice 263 adds one, subscribe here.
-      // For now, just log that the hook is ready.
-      console.debug('[topo] EventSource hook ready — no event endpoint yet (wired in slice 263)');
-    } catch (_) {}
-  })();
 </script>
 
 </body>

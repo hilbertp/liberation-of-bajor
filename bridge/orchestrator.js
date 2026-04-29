@@ -9,7 +9,8 @@ const { buildNogPrompt } = require('./nog-prompt');
 const { translateEvent, translateVerdict, resetDedupeState } = require('./lifecycle-translate');
 const gitFinalizer = require('./git-finalizer');
 const { reconcileBranchState } = require('./state/branch-state-recovery');
-const { recoverGateMutex } = require('./state/gate-mutex');
+const { recoverGateMutex, acquireGateMutex, releaseGateMutex } = require('./state/gate-mutex');
+const { writeJsonAtomic } = require('./state/atomic-write');
 const { emit: emitGateTelemetry } = require('./state/gate-telemetry');
 
 // ---------------------------------------------------------------------------
@@ -5371,7 +5372,96 @@ function validateIntakeMeta(meta) {
 }
 
 // ---------------------------------------------------------------------------
+// Gate start — placeholder gate pipeline (slice 265)
+// ---------------------------------------------------------------------------
+
+const BRANCH_STATE_PATH = path.resolve(__dirname, 'state', 'branch-state.json');
+
+/**
+ * startGate()
+ *
+ * Entry point for the Bashir regression gate. Acquires the gate mutex,
+ * transitions branch-state.gate to GATE_RUNNING, emits gate-start telemetry,
+ * then schedules a placeholder 1-second timeout that emits regression-fail
+ * (no real Bashir/tests yet), releases the mutex, and transitions to GATE_FAILED.
+ *
+ * Returns { devTipSha } on success.
+ * Throws if mutex acquisition fails or branch-state is unreadable.
+ */
+function startGate() {
+  const ctx = { registerEvent, log };
+
+  // 1. Read current branch-state
+  let branchState;
+  try {
+    branchState = JSON.parse(fs.readFileSync(BRANCH_STATE_PATH, 'utf-8'));
+  } catch (err) {
+    throw new Error('Cannot read branch-state.json: ' + err.message);
+  }
+
+  const devTipSha = branchState.dev ? branchState.dev.tip_sha : null;
+  if (!devTipSha) {
+    throw new Error('dev.tip_sha is null — nothing to gate');
+  }
+
+  // 2. Acquire mutex (placeholder mode: bashirPid=null, heartbeatPath=null)
+  const result = acquireGateMutex(devTipSha, null, null, ctx);
+  if (!result.ok) {
+    const err = new Error('Gate mutex already held');
+    err.code = 'MUTEX_HELD';
+    throw err;
+  }
+
+  // 3. Update branch-state: GATE_RUNNING
+  const ts = new Date().toISOString();
+  branchState.gate = branchState.gate || {};
+  branchState.gate.status = 'GATE_RUNNING';
+  branchState.gate.current_run = { started_ts: ts, snapshot_dev_tip_sha: devTipSha };
+  writeJsonAtomic(BRANCH_STATE_PATH, branchState);
+
+  // 4. Emit gate-start telemetry
+  emitGateTelemetry('gate-start', { devTipSha, ts });
+
+  // 5. Placeholder gate: 1-second timeout → regression-fail
+  setTimeout(() => {
+    try {
+      const failTs = new Date().toISOString();
+
+      // Emit regression-fail
+      emitGateTelemetry('regression-fail', {
+        failed_acs: [],
+        reason: 'placeholder-gate-not-yet-implemented',
+      });
+
+      // Update branch-state: GATE_FAILED
+      let state;
+      try {
+        state = JSON.parse(fs.readFileSync(BRANCH_STATE_PATH, 'utf-8'));
+      } catch (_) {
+        state = branchState;
+      }
+      state.gate = state.gate || {};
+      state.gate.status = 'GATE_FAILED';
+      state.gate.current_run = null;
+      state.gate.last_failure = {
+        ts: failTs,
+        dev_tip_sha: devTipSha,
+        failed_acs: [],
+      };
+      writeJsonAtomic(BRANCH_STATE_PATH, state);
+
+      // Release mutex
+      releaseGateMutex('regression-fail', ctx);
+    } catch (err) {
+      log('error', 'gate', { msg: 'Placeholder gate failure handler error', error: err.message });
+    }
+  }, 1000);
+
+  return { devTipSha };
+}
+
+// ---------------------------------------------------------------------------
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, verifyOriginAdvanced, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, backfillArchive, backfillAcceptedFiles, backfillBranches, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, validateIntakeMeta, ensureMainIsFresh, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, auditLegacyFiles, CANONICAL_LIVE_SUFFIXES, CANONICAL_SUFFIX_RE, handleReturnToStage, findOriginalSliceBody, reconcileBranchState, _testSetRegisterFile: (p) => { REGISTER_FILE = p; }, _testSetDirs: (q, s, t) => { QUEUE_DIR = q; STAGED_DIR = s; TRASH_DIR = t; } };
+module.exports = { startGate, nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, verifyOriginAdvanced, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, backfillArchive, backfillAcceptedFiles, backfillBranches, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, validateIntakeMeta, ensureMainIsFresh, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, auditLegacyFiles, CANONICAL_LIVE_SUFFIXES, CANONICAL_SUFFIX_RE, handleReturnToStage, findOriginalSliceBody, reconcileBranchState, _testSetRegisterFile: (p) => { REGISTER_FILE = p; }, _testSetDirs: (q, s, t) => { QUEUE_DIR = q; STAGED_DIR = s; TRASH_DIR = t; } };

@@ -1389,6 +1389,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Gate start (slice 265) ─────────────────────────────────────────────────
+  if (pathname === '/api/gate/start' && req.method === 'POST') {
+    // Validate branch-state preconditions
+    let branchState;
+    try {
+      branchState = JSON.parse(fs.readFileSync(BRANCH_STATE, 'utf8'));
+    } catch (_) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'branch-state-unavailable' }));
+      return;
+    }
+
+    const gateStatus = branchState.gate ? branchState.gate.status : 'IDLE';
+    if (gateStatus === 'GATE_RUNNING' || gateStatus === 'GATE_FAILED' || gateStatus === 'GATE_ABORTED') {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'gate-not-idle', status: gateStatus }));
+      return;
+    }
+
+    const commitsAhead = branchState.dev ? (branchState.dev.commits_ahead_of_main || 0) : 0;
+    if (commitsAhead === 0) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'nothing-to-gate' }));
+      return;
+    }
+
+    // Invoke orchestrator's startGate()
+    try {
+      const { startGate } = require(path.join(REPO_ROOT, 'bridge', 'orchestrator'));
+      const result = startGate();
+      res.writeHead(202, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ started: true, dev_tip_sha: result.devTipSha }));
+    } catch (err) {
+      if (err.code === 'MUTEX_HELD') {
+        res.writeHead(409, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'gate-not-idle', status: 'GATE_RUNNING' }));
+      } else {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    }
+    return;
+  }
+
   // ── Branch state (slice 262) ───────────────────────────────────────────────
   if (pathname === '/api/branch-state' && req.method === 'GET') {
     try {
