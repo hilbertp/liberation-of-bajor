@@ -14,6 +14,7 @@ const STAGED_DIR   = path.join(REPO_ROOT, 'bridge', 'staged');
 const TRASH_DIR    = path.join(REPO_ROOT, 'bridge', 'trash');
 const DASHBOARD    = path.join(__dirname, 'lcars-dashboard.html');
 const TOKENS_CSS   = path.join(__dirname, 'tokens.css');
+const BRANCH_STATE = path.join(REPO_ROOT, 'bridge', 'state', 'branch-state.json');
 
 const FIRST_OUTPUT  = path.join(REPO_ROOT, 'bridge', 'first-output.json');
 const NOG_ACTIVE    = path.join(REPO_ROOT, 'bridge', 'nog-active.json');
@@ -1384,6 +1385,20 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
+  // ── Branch state (slice 262) ───────────────────────────────────────────────
+  if (pathname === '/api/branch-state' && req.method === 'GET') {
+    try {
+      const raw = fs.readFileSync(BRANCH_STATE, 'utf8');
+      const parsed = JSON.parse(raw);
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(parsed));
+    } catch (err) {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify({ error: 'branch-state-unavailable' }));
     }
     return;
   }

@@ -1999,6 +1999,112 @@
   .gate-events-list .gate-evt { margin-bottom: 2px; }
   .gate-events-list .gate-evt-ts { color: #9ca3af; margin-right: 6px; }
 
+  /* ── BRANCH TOPOLOGY PANEL (slice 262) ────────────────────── */
+  .topo-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    max-width: 1296px;
+    margin: 0 auto 16px auto;
+  }
+  .topo-panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .topo-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px 8px 20px;
+  }
+  .topo-panel-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink-2);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .topo-collapse-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ink-3);
+    font-size: 14px;
+    transition: transform var(--motion-slow);
+  }
+  .topo-collapsed .topo-collapse-btn {
+    transform: rotate(-90deg);
+  }
+  .topo-panel-body {
+    padding: 0 20px 16px 20px;
+  }
+  .topo-collapsed .topo-panel-body { display: none; }
+  .topo-svg-wrap {
+    overflow-x: auto;
+    margin-bottom: 12px;
+  }
+  .topo-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0 0 0;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .topo-foot-stats { font-weight: 500; }
+  .topo-foot-stats strong { font-weight: 700; }
+  .merge-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 16px;
+    background: var(--ok);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: var(--shadow-cta);
+    transition: opacity var(--motion-fast);
+  }
+  .merge-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  .gate-status-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: var(--radius-pill);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .gate-status-pill.warn { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-border); }
+  .gate-status-pill.err  { background: var(--err-bg); color: var(--err); border: 1px solid var(--err-border); }
+
+  /* Collapsed mini strip */
+  .topo-mini {
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 20px 10px 20px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .topo-collapsed .topo-mini { display: flex; }
+  .topo-mini-stat { font-weight: 600; }
+
   /* ── RESPONSIVE ────────────────────────────────────────── */
   @media (max-width: 900px) {
     .dashboard-container { padding: 20px 20px; }
@@ -2772,6 +2878,33 @@
         <span id="ops-health-label">ONLINE</span>
         <div class="health-pill-tooltip" id="ops-health-tooltip"></div>
       </span>
+    </div>
+  </div>
+
+  <!-- ── BRANCH TOPOLOGY (slice 262) ──────────────────────────────────── -->
+  <div class="topo-row">
+    <div class="topo-panel" id="topo-panel">
+      <div class="topo-panel-head">
+        <span class="topo-panel-title">Branch Topology</span>
+        <button class="topo-collapse-btn" id="topo-collapse-btn" onclick="toggleTopoCollapse()" aria-label="Toggle branch topology panel">&#9662;</button>
+      </div>
+      <div class="topo-panel-body" id="topo-panel-body">
+        <div class="topo-svg-wrap" id="topo-svg-wrap"></div>
+        <div class="topo-foot" id="topo-foot">
+          <span class="topo-foot-stats" id="topo-foot-stats"></span>
+          <span id="topo-foot-action"></span>
+        </div>
+      </div>
+      <div class="topo-mini" id="topo-mini">
+        <svg viewBox="0 0 280 32" width="280" height="32" role="img" aria-label="Branch topology collapsed">
+          <line x1="10" y1="10" x2="270" y2="10" stroke="var(--branch-main)" stroke-width="2" />
+          <line x1="10" y1="22" x2="200" y2="22" stroke="var(--branch-dev)" stroke-width="2" />
+          <line x1="200" y1="22" x2="220" y2="10" stroke="var(--branch-dev)" stroke-width="1.5" stroke-dasharray="3 2" />
+          <circle cx="250" cy="10" r="4" fill="var(--branch-main)" />
+        </svg>
+        <span class="topo-mini-stat" id="topo-mini-stat"></span>
+        <span id="topo-mini-pill"></span>
+      </div>
     </div>
   </div>
 
@@ -4464,6 +4597,8 @@
       // Detect batch-gate / paused state:
       // 1. Explicit flag from watcher (placeholder — not yet in heartbeat payload)
       // 2. Fall back to checking if the active slice is paused via register events
+      // TODO (slice 263): Override health pill to BATCH GATE when branch-state.gate.status === 'GATE_RUNNING'
+      // per Ziyal §Header health-pill spec. Requires gate-start handler from slice 263.
       const watcherPaused = w && w.paused;
       const activePaused  = w && w.currentSlice && typeof isSlicePaused === 'function'
                             && isSlicePaused(w.currentSlice);
@@ -5601,6 +5736,232 @@
   fetchCosts();
   costCenterInterval = setInterval(fetchCosts, 30000);
   setInterval(updateCostCenterTimestamp, 1000);
+
+  // ── Branch Topology panel (slice 262) ─────────────────────────────────────
+  let _lastBranchState = null;
+
+  // Collapse toggle — persisted in localStorage
+  function toggleTopoCollapse() {
+    const panel = document.getElementById('topo-panel');
+    if (!panel) return;
+    panel.classList.toggle('topo-collapsed');
+    const collapsed = panel.classList.contains('topo-collapsed');
+    try { localStorage.setItem('ops:topo-collapsed', collapsed ? '1' : ''); } catch (_) {}
+  }
+
+  // Restore collapse state on load
+  (function() {
+    try {
+      if (localStorage.getItem('ops:topo-collapsed') === '1') {
+        const panel = document.getElementById('topo-panel');
+        if (panel) panel.classList.add('topo-collapsed');
+      }
+    } catch (_) {}
+  })();
+
+  function renderTopoSvg(bs) {
+    const wrap = document.getElementById('topo-svg-wrap');
+    if (!wrap) return;
+
+    const commits = bs.dev && bs.dev.commits ? bs.dev.commits : [];
+    const ahead = bs.dev ? (bs.dev.commits_ahead_of_main || 0) : 0;
+    const mainTip = bs.main ? bs.main.tip_sha : null;
+    const lastMerge = bs.last_merge;
+    const gateStatus = bs.gate ? bs.gate.status : null;
+
+    // Build aria label
+    const ariaLabel = `Branch topology: dev ${ahead} commits ahead of main, gate ${gateStatus || 'idle'}`;
+
+    // Track positions
+    const xStart = 80, xEnd = 840;
+    const mainY = 52, devY = 92;
+
+    // Determine dots to render
+    const mainDots = [];
+    const devDots = [];
+
+    // Always show a main dot (the tip or last merge)
+    const mainSha = lastMerge ? lastMerge.sha : (mainTip || null);
+    if (mainSha) {
+      mainDots.push({ sha: mainSha, isMerge: !!lastMerge });
+    }
+
+    for (let i = 0; i < commits.length; i++) {
+      devDots.push(commits[i]);
+    }
+
+    // Calculate x positions for dev dots
+    const totalDots = Math.max(devDots.length + (mainDots.length ? 1 : 0), 1);
+    const spacing = devDots.length > 0 ? (xEnd - xStart) / Math.max(devDots.length, 1) : 0;
+
+    let svg = `<svg viewBox="0 0 920 140" style="min-width:920px;width:100%;height:140px" role="img" aria-label="${ariaLabel}">`;
+
+    // Main track line
+    svg += `<line x1="20" y1="${mainY}" x2="900" y2="${mainY}" stroke="var(--branch-main)" stroke-width="2.5" />`;
+
+    // Dev track line
+    if (devDots.length > 0) {
+      const lastDevX = xStart + (devDots.length - 1) * spacing;
+      svg += `<line x1="20" y1="${devY}" x2="${lastDevX}" y2="${devY}" stroke="var(--branch-dev)" stroke-width="2.5" />`;
+      // Dashed continuation after last dev dot
+      svg += `<line x1="${lastDevX}" y1="${devY}" x2="900" y2="${devY}" stroke="var(--branch-dev)" stroke-width="2" stroke-dasharray="6 4" />`;
+    } else {
+      // No dev commits — entire dev track is dashed
+      svg += `<line x1="20" y1="${devY}" x2="900" y2="${devY}" stroke="var(--branch-dev)" stroke-width="2" stroke-dasharray="6 4" />`;
+    }
+
+    // Main dot(s)
+    if (mainDots.length > 0) {
+      const mx = devDots.length > 0 ? xEnd : xStart;
+      const md = mainDots[0];
+      if (md.isMerge) {
+        // Merge dot with check
+        svg += `<circle cx="${mx}" cy="${mainY}" r="7.5" fill="var(--branch-main)">`;
+        svg += `<title>Merge: ${(md.sha || '').slice(0, 7)}</title></circle>`;
+        // White check mark
+        svg += `<path d="M${mx - 3} ${mainY} l2 3 l4 -5" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" />`;
+        // Hash annotation above (merge style)
+        svg += `<text x="${mx}" y="42" text-anchor="middle" font-size="10" font-weight="600" fill="var(--ok)">${(md.sha || '').slice(0, 7)}</text>`;
+      } else {
+        svg += `<circle cx="${mx}" cy="${mainY}" r="6" fill="var(--branch-main)">`;
+        svg += `<title>main: ${(md.sha || '').slice(0, 7)}</title></circle>`;
+        svg += `<text x="${mx}" y="42" text-anchor="middle" font-size="10" fill="var(--ink-4)">${(md.sha || '').slice(0, 7)}</text>`;
+      }
+    }
+
+    // Dev dots
+    for (let i = 0; i < devDots.length; i++) {
+      const dx = xStart + i * spacing;
+      const d = devDots[i];
+      const sha7 = (d.sha || '').slice(0, 7);
+      const sliceId = d.slice_id || '';
+      const isHead = (i === devDots.length - 1);
+
+      if (isHead) {
+        // HEAD dot — larger
+        svg += `<circle cx="${dx}" cy="${devY}" r="7.5" fill="var(--branch-dev)">`;
+        svg += `<title>HEAD: ${sha7}</title></circle>`;
+        // HEAD badge above
+        svg += `<rect x="${dx - 20}" y="${devY - 28}" width="40" height="14" rx="3" fill="var(--rom)" />`;
+        svg += `<text x="${dx}" y="${devY - 18}" text-anchor="middle" font-size="9" font-weight="700" letter-spacing="0.5" fill="#fff">HEAD</text>`;
+      } else {
+        svg += `<circle cx="${dx}" cy="${devY}" r="6" fill="var(--branch-dev)">`;
+        svg += `<title>dev: ${sha7}</title></circle>`;
+      }
+
+      // Slice ID annotation above dot
+      if (sliceId) {
+        const sliceY = isHead ? devY - 34 : devY - 14;
+        svg += `<text x="${dx}" y="${sliceY}" text-anchor="middle" font-size="11" font-weight="600" fill="var(--rom)">${sliceId}</text>`;
+      }
+
+      // Hash below dot
+      svg += `<text x="${dx}" y="115" text-anchor="middle" font-size="10" fill="var(--ink-4)">${sha7}</text>`;
+    }
+
+    svg += '</svg>';
+    wrap.innerHTML = svg;
+  }
+
+  function renderTopoFooter(bs) {
+    const statsEl = document.getElementById('topo-foot-stats');
+    const actionEl = document.getElementById('topo-foot-action');
+    if (!statsEl || !actionEl) return;
+
+    const ahead = bs.dev ? (bs.dev.commits_ahead_of_main || 0) : 0;
+    statsEl.innerHTML = `<strong>${ahead}</strong> commit${ahead !== 1 ? 's' : ''} ahead of main`;
+
+    const gateStatus = bs.gate ? bs.gate.status : null;
+
+    if (!gateStatus || gateStatus === 'IDLE' || gateStatus === 'ACCUMULATING') {
+      const disabled = ahead === 0 ? ' disabled' : '';
+      actionEl.innerHTML = `<button class="merge-btn"${disabled} onclick="mergeButtonClick()" aria-label="Merge dev to main via Bashir gate">Merge to main</button>`;
+    } else if (gateStatus === 'GATE_RUNNING') {
+      actionEl.innerHTML = '<span class="gate-status-pill warn">GATE RUNNING</span>';
+    } else if (gateStatus === 'GATE_FAILED') {
+      actionEl.innerHTML = '<span class="gate-status-pill err">GATE FAILED</span>';
+    } else if (gateStatus === 'GATE_ABORTED') {
+      actionEl.innerHTML = '<span class="gate-status-pill warn">GATE ABORTED</span>';
+    } else {
+      actionEl.innerHTML = `<span class="gate-status-pill warn">${gateStatus}</span>`;
+    }
+  }
+
+  function renderTopoMini(bs) {
+    const statEl = document.getElementById('topo-mini-stat');
+    const pillEl = document.getElementById('topo-mini-pill');
+    if (!statEl) return;
+
+    const ahead = bs.dev ? (bs.dev.commits_ahead_of_main || 0) : 0;
+    statEl.textContent = `${ahead} ahead`;
+
+    if (pillEl) {
+      const gateStatus = bs.gate ? bs.gate.status : null;
+      if (!gateStatus || gateStatus === 'IDLE' || gateStatus === 'ACCUMULATING') {
+        pillEl.innerHTML = '';
+      } else if (gateStatus === 'GATE_RUNNING') {
+        pillEl.innerHTML = '<span class="gate-status-pill warn" style="font-size:11px;padding:2px 8px">GATE RUNNING</span>';
+      } else if (gateStatus === 'GATE_FAILED') {
+        pillEl.innerHTML = '<span class="gate-status-pill err" style="font-size:11px;padding:2px 8px">GATE FAILED</span>';
+      } else if (gateStatus === 'GATE_ABORTED') {
+        pillEl.innerHTML = '<span class="gate-status-pill warn" style="font-size:11px;padding:2px 8px">GATE ABORTED</span>';
+      }
+    }
+  }
+
+  function renderBranchTopology(bs) {
+    _lastBranchState = bs;
+    if (bs.error) {
+      // Unavailable state
+      const statsEl = document.getElementById('topo-foot-stats');
+      if (statsEl) statsEl.textContent = 'Branch state unavailable';
+      const actionEl = document.getElementById('topo-foot-action');
+      if (actionEl) actionEl.innerHTML = '';
+      const wrap = document.getElementById('topo-svg-wrap');
+      if (wrap) wrap.innerHTML = '';
+      return;
+    }
+    renderTopoSvg(bs);
+    renderTopoFooter(bs);
+    renderTopoMini(bs);
+  }
+
+  function mergeButtonClick() {
+    const bs = _lastBranchState;
+    const ahead = bs && bs.dev ? (bs.dev.commits_ahead_of_main || 0) : 0;
+    if (ahead === 0) return;
+    console.log('gate-start placeholder — wired in slice 263');
+  }
+
+  async function fetchBranchState() {
+    try {
+      const res = await fetch('/api/branch-state');
+      if (res.status === 503) {
+        const err = await res.json();
+        renderBranchTopology({ error: err.error });
+        return;
+      }
+      if (!res.ok) return;
+      const data = await res.json();
+      renderBranchTopology(data);
+    } catch (_) {
+      renderBranchTopology({ error: 'fetch-failed' });
+    }
+  }
+
+  // Initial fetch + 5s polling
+  fetchBranchState();
+  setInterval(fetchBranchState, 5000);
+
+  // EventSource placeholder for branch-state changes (slice 262)
+  // The events.jsonl file may not exist yet — log and do not retry aggressively.
+  (function() {
+    try {
+      // No SSE endpoint exists yet; when slice 263 adds one, subscribe here.
+      // For now, just log that the hook is ready.
+      console.debug('[topo] EventSource hook ready — no event endpoint yet (wired in slice 263)');
+    } catch (_) {}
+  })();
 </script>
 
 </body>
