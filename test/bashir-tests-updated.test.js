@@ -1,13 +1,15 @@
 'use strict';
 
 /**
- * bashir-tests-updated.test.js — Slice 267
+ * bashir-tests-updated.test.js — Slice 267 (updated by slice 268)
  *
  * Tests that the orchestrator transitions correctly when Bashir emits
- * the `tests-updated` event:
- *   1. _gateTestsUpdated emits regression-fail with reason suite-not-yet-executed
- *   2. _gateTestsUpdated sets branch-state.gate.status to GATE_FAILED
- *   3. _gateTestsUpdated releases the mutex
+ * the `tests-updated` event. Slice 268 replaced the placeholder
+ * regression-fail with real suite execution, so the first 3 tests now
+ * verify async suite-runner behavior:
+ *   1. _gateTestsUpdated runs suite and emits regression-pass (no test files → exit 0)
+ *   2. _gateTestsUpdated records last_pass in branch-state
+ *   3. _gateTestsUpdated does NOT release mutex on pass
  *   4. _checkForEvent finds events after a given timestamp
  *
  * Run: node test/bashir-tests-updated.test.js
@@ -48,6 +50,8 @@ const TEST_REGISTER = path.resolve(__dirname, '..', 'bridge', 'state', 'test-reg
 const telemetry = require('../bridge/state/gate-telemetry');
 telemetry.setRegisterPath(TEST_REGISTER);
 
+const { writeJsonAtomic } = require('../bridge/state/atomic-write');
+
 const originalBranchState = fs.readFileSync(BRANCH_STATE_PATH, 'utf-8');
 
 function readTelemetryEvents() {
@@ -81,67 +85,7 @@ const ctx = {
 // ---------------------------------------------------------------------------
 
 console.log('\nbashir-tests-updated.test.js');
-console.log('─'.repeat(50));
-
-test('_gateTestsUpdated emits regression-fail via telemetry', () => {
-  cleanup();
-
-  // Pre-create mutex so release can find it
-  const { writeJsonAtomic } = require('../bridge/state/atomic-write');
-  writeJsonAtomic(MUTEX_PATH, {
-    schema_version: 1,
-    started_ts: new Date().toISOString(),
-    dev_tip_sha: 'test123',
-    bashir_pid: null,
-    bashir_heartbeat_path: null,
-  });
-
-  // Set branch-state to GATE_RUNNING
-  const state = JSON.parse(originalBranchState);
-  state.gate = { status: 'GATE_RUNNING', current_run: { started_ts: new Date().toISOString() } };
-  writeJsonAtomic(BRANCH_STATE_PATH, state);
-
-  orchestrator._gateTestsUpdated('test123', ctx);
-
-  const events = readTelemetryEvents();
-  const failEvent = events.find(e => e.event === 'regression-fail');
-  assert.ok(failEvent, 'Should emit regression-fail');
-  assert.strictEqual(failEvent.reason, 'suite-not-yet-executed', 'Reason should be suite-not-yet-executed');
-});
-
-test('_gateTestsUpdated sets branch-state to GATE_FAILED', () => {
-  cleanup();
-
-  const { writeJsonAtomic } = require('../bridge/state/atomic-write');
-  writeJsonAtomic(MUTEX_PATH, {
-    schema_version: 1,
-    started_ts: new Date().toISOString(),
-    dev_tip_sha: 'test123',
-  });
-
-  orchestrator._gateTestsUpdated('test123', ctx);
-
-  const state = JSON.parse(fs.readFileSync(BRANCH_STATE_PATH, 'utf-8'));
-  assert.strictEqual(state.gate.status, 'GATE_FAILED', 'Gate status should be GATE_FAILED');
-  assert.strictEqual(state.gate.current_run, null, 'current_run should be null');
-  assert.ok(state.gate.last_failure, 'last_failure should be set');
-  assert.strictEqual(state.gate.last_failure.dev_tip_sha, 'test123');
-});
-
-test('_gateTestsUpdated releases the mutex', () => {
-  cleanup();
-
-  const { writeJsonAtomic } = require('../bridge/state/atomic-write');
-  writeJsonAtomic(MUTEX_PATH, {
-    schema_version: 1,
-    started_ts: new Date().toISOString(),
-    dev_tip_sha: 'test123',
-  });
-
-  orchestrator._gateTestsUpdated('test123', ctx);
-
-  assert.ok(!fs.existsSync(MUTEX_PATH), 'Mutex file should be deleted');
-});
+console.log('\u2500'.repeat(50));
 
 test('_checkForEvent finds matching event after timestamp', () => {
   cleanup();
@@ -178,10 +122,74 @@ test('_checkForEvent returns null for non-matching event', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cleanup + report
+// Async test: _gateTestsUpdated runs suite (must be last — sync tests above
+// call cleanup() which would delete the mutex while this polls).
 // ---------------------------------------------------------------------------
 
-cleanup();
+// _gateTestsUpdated is now async (spawns node --test). With no regression
+// test files, the runner exits 0 → regression-pass. We poll for the event.
+(function asyncTest() {
+  cleanup();
 
-console.log(`\n  ${passed} passed, ${failed} failed\n`);
-if (failed > 0) process.exit(1);
+  writeJsonAtomic(MUTEX_PATH, {
+    schema_version: 1,
+    started_ts: new Date().toISOString(),
+    dev_tip_sha: 'test123',
+    bashir_pid: null,
+    bashir_heartbeat_path: null,
+  });
+
+  const state = JSON.parse(originalBranchState);
+  state.gate = { status: 'GATE_RUNNING', current_run: { started_ts: new Date().toISOString() } };
+  writeJsonAtomic(BRANCH_STATE_PATH, state);
+
+  orchestrator._gateTestsUpdated('test123', ctx);
+
+  let attempts = 0;
+  const poll = setInterval(() => {
+    attempts++;
+    const events = readTelemetryEvents();
+    const passEvent = events.find(e => e.event === 'regression-pass');
+    if (passEvent) {
+      clearInterval(poll);
+
+      try {
+        assert.ok(typeof passEvent.suite_size === 'number', 'suite_size should be a number');
+        assert.ok(typeof passEvent.duration_ms === 'number', 'duration_ms should be a number');
+
+        // Branch-state should have last_pass set
+        const bs = JSON.parse(fs.readFileSync(BRANCH_STATE_PATH, 'utf-8'));
+        assert.ok(bs.gate.last_pass, 'last_pass should be set');
+        assert.strictEqual(bs.gate.last_pass.dev_tip_sha, 'test123');
+
+        // Mutex should NOT be released on pass
+        assert.ok(fs.existsSync(MUTEX_PATH), 'Mutex should NOT be released on pass');
+
+        passed++;
+        console.log('  \u2713 regression-pass emitted, last_pass set, mutex held');
+      } catch (err) {
+        failed++;
+        console.log('  \u2717 regression-pass assertions failed');
+        console.log(`    ${err.message}`);
+      }
+
+      cleanup();
+      try { fs.unlinkSync(MUTEX_PATH); } catch (_) {}
+      report();
+      return;
+    }
+    if (attempts > 60) {
+      clearInterval(poll);
+      cleanup();
+      try { fs.unlinkSync(MUTEX_PATH); } catch (_) {}
+      failed++;
+      console.log('  \u2717 timed out waiting for regression-pass event');
+      report();
+    }
+  }, 500);
+})();
+
+function report() {
+  console.log(`\n  ${passed} passed, ${failed} failed\n`);
+  if (failed > 0) process.exit(1);
+}

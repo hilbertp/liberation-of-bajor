@@ -5383,6 +5383,12 @@ const BASHIR_HEARTBEAT_POLL_MS = 30000;
 const BASHIR_HEARTBEAT_STALE_MS = 90000;
 const BASHIR_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
+// Regression suite execution (slice 268)
+const REGRESSION_STDOUT_LOG = path.resolve(__dirname, 'state', 'regression-stdout.log');
+const REGRESSION_STDERR_LOG = path.resolve(__dirname, 'state', 'regression-stderr.log');
+const REGRESSION_TIMEOUT_MS = parseInt(process.env.DS9_REGRESSION_TIMEOUT_S || '600', 10) * 1000;
+const AC_NAMING_RE = /slice-(\d+)-ac-(\d+)/;
+
 /**
  * buildBashirPrompt(branchState)
  *
@@ -5596,20 +5602,189 @@ function _checkForEvent(eventName, afterTs) {
 }
 
 /**
+ * _parseFailedAcs(output)
+ *
+ * Parses Node-native test runner output for failing tests.
+ * Handles both spec format (default: lines like "✖ test name") and
+ * TAP format (lines like "not ok N - test name").
+ * Returns an array of { slice_id, ac_index, test_path, failure_excerpt }
+ * and a boolean indicating whether any naming violations were found.
+ */
+function _parseFailedAcs(output) {
+  const failedAcs = [];
+  let hasNamingViolation = false;
+  const seen = new Set(); // dedupe — spec format repeats failures in summary
+
+  const lines = output.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Match spec-format fail: "✖ <test name> (<duration>)"
+    // Also match TAP "not ok N - <description>"
+    const specFail = line.match(/^\u2716\s+(.*?)(?:\s+\(\d[\d.]*m?s\))?$/);
+    const tapFail = line.match(/^not ok \d+\s*-?\s*(.*)/);
+    const match = specFail || tapFail;
+
+    if (match) {
+      const testDesc = match[1].trim();
+
+      // Dedupe: skip if we've already recorded this test
+      if (seen.has(testDesc)) { i++; continue; }
+      seen.add(testDesc);
+
+      // Collect failure excerpt from subsequent indented/diagnostic lines
+      const excerptLines = [];
+      let j = i + 1;
+      while (j < lines.length && (lines[j].startsWith('  ') || lines[j].startsWith('#') || lines[j].startsWith('\u2139'))) {
+        excerptLines.push(lines[j]);
+        j++;
+      }
+      const excerpt = excerptLines.slice(0, 10).join('\n').trim();
+
+      // Try to extract slice/AC from test name
+      const acMatch = testDesc.match(AC_NAMING_RE);
+      if (acMatch) {
+        failedAcs.push({
+          slice_id: acMatch[1],
+          ac_index: parseInt(acMatch[2], 10),
+          test_path: testDesc,
+          failure_excerpt: excerpt,
+        });
+      } else {
+        hasNamingViolation = true;
+        failedAcs.push({
+          slice_id: 'unknown',
+          ac_index: -1,
+          test_path: testDesc,
+          failure_excerpt: excerpt,
+        });
+      }
+    }
+    i++;
+  }
+
+  return { failedAcs, hasNamingViolation };
+}
+
+/**
+ * _parseSuiteSize(output)
+ *
+ * Extracts suite size from Node-native test runner output.
+ * Handles spec format ("ℹ tests N"), TAP ("1..N"), and summary ("# tests N").
+ */
+function _parseSuiteSize(output) {
+  // Spec format: "ℹ tests N"
+  const specMatch = output.match(/\u2139 tests (\d+)/);
+  if (specMatch) return parseInt(specMatch[1], 10);
+  // TAP plan line: "1..N"
+  const planMatch = output.match(/^1\.\.(\d+)/m);
+  if (planMatch) return parseInt(planMatch[1], 10);
+  // TAP summary: "# tests N"
+  const testsMatch = output.match(/# tests (\d+)/);
+  if (testsMatch) return parseInt(testsMatch[1], 10);
+  return 0;
+}
+
+/**
  * _gateTestsUpdated(devTipSha, ctx)
  *
- * Called when Bashir emits tests-updated. For this slice, immediately emits
- * a placeholder regression-fail (suite execution lands in slice 268),
- * updates branch-state, and releases the mutex.
+ * Called when Bashir emits tests-updated. Spawns the regression suite
+ * runner, parses results, emits regression-pass or regression-fail,
+ * and updates branch-state accordingly. Mutex held on pass; released on fail.
  */
 function _gateTestsUpdated(devTipSha, ctx) {
-  const failTs = new Date().toISOString();
+  const startMs = Date.now();
 
-  emitGateTelemetry('regression-fail', {
-    failed_acs: [],
-    reason: 'suite-not-yet-executed',
-  });
+  log('info', 'gate', { msg: 'Running regression suite', devTipSha });
 
+  const runnerArgs = ['--test', 'regression/**/*.test.js'];
+  let timedOut = false;
+
+  const child = execFile(
+    'node',
+    runnerArgs,
+    {
+      cwd: PROJECT_DIR,
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: REGRESSION_TIMEOUT_MS,
+    },
+    (err, stdout, stderr) => {
+      const durationMs = Date.now() - startMs;
+
+      // Persist stdout/stderr to logs
+      try { fs.writeFileSync(REGRESSION_STDOUT_LOG, stdout || '', 'utf-8'); } catch (_) {}
+      try { fs.writeFileSync(REGRESSION_STDERR_LOG, stderr || '', 'utf-8'); } catch (_) {}
+
+      // Handle timeout (execFile sets err.killed=true, err.signal='SIGTERM' on timeout)
+      if (err && err.killed) {
+        timedOut = true;
+        log('warn', 'gate', { msg: 'Regression suite timed out', timeout_ms: REGRESSION_TIMEOUT_MS });
+
+        emitGateTelemetry('regression-fail', {
+          failed_acs: [],
+          reason: 'suite-timeout',
+        });
+
+        _updateBranchStateOnFail(devTipSha, []);
+        releaseGateMutex('regression_fail', ctx);
+        return;
+      }
+
+      const output = (stdout || '') + '\n' + (stderr || '');
+
+      if (!err) {
+        // All tests passed (exit code 0)
+        const suiteSize = _parseSuiteSize(output);
+
+        emitGateTelemetry('regression-pass', {
+          suite_size: suiteSize,
+          duration_ms: durationMs,
+        });
+
+        // Update branch-state: record last_pass, keep status GATE_RUNNING
+        let state;
+        try {
+          state = JSON.parse(fs.readFileSync(BRANCH_STATE_PATH, 'utf-8'));
+        } catch (_) {
+          state = { gate: {} };
+        }
+        state.gate = state.gate || {};
+        state.gate.last_pass = { ts: new Date().toISOString(), dev_tip_sha: devTipSha };
+        writeJsonAtomic(BRANCH_STATE_PATH, state);
+
+        // Do NOT release mutex — slice 269 holds it through dev → main merge
+        log('info', 'gate', { msg: 'Regression suite passed', suite_size: suiteSize, duration_ms: durationMs });
+        return;
+      }
+
+      // At least one test failed (exit code non-zero)
+      const { failedAcs, hasNamingViolation } = _parseFailedAcs(output);
+
+      if (hasNamingViolation) {
+        registerEvent('gate', 'BASHIR_TEST_NAMING_VIOLATION', {
+          msg: 'One or more failing tests do not follow slice-<id>-ac-<index> naming convention',
+          dev_tip_sha: devTipSha,
+        });
+      }
+
+      emitGateTelemetry('regression-fail', { failed_acs: failedAcs });
+
+      _updateBranchStateOnFail(devTipSha, failedAcs);
+      releaseGateMutex('regression_fail', ctx);
+
+      log('info', 'gate', { msg: 'Regression suite failed', failed_count: failedAcs.length });
+    }
+  );
+}
+
+/**
+ * _updateBranchStateOnFail(devTipSha, failedAcs)
+ *
+ * Sets gate.status to GATE_FAILED, clears current_run, records last_failure.
+ */
+function _updateBranchStateOnFail(devTipSha, failedAcs) {
   let state;
   try {
     state = JSON.parse(fs.readFileSync(BRANCH_STATE_PATH, 'utf-8'));
@@ -5620,13 +5795,11 @@ function _gateTestsUpdated(devTipSha, ctx) {
   state.gate.status = 'GATE_FAILED';
   state.gate.current_run = null;
   state.gate.last_failure = {
-    ts: failTs,
+    ts: new Date().toISOString(),
     dev_tip_sha: devTipSha,
-    failed_acs: [],
+    failed_acs: failedAcs,
   };
   writeJsonAtomic(BRANCH_STATE_PATH, state);
-
-  releaseGateMutex('regression_fail', ctx);
 }
 
 /**
@@ -5656,4 +5829,4 @@ function _gateAbort(devTipSha, reason, ctx) {
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { startGate, buildBashirPrompt, _gateTestsUpdated, _gateAbort, _checkForEvent, BASHIR_HEARTBEAT_PATH, BASHIR_STDOUT_LOG, BASHIR_HEARTBEAT_POLL_MS, BASHIR_HEARTBEAT_STALE_MS, BASHIR_TIMEOUT_MS, nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, verifyOriginAdvanced, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, backfillArchive, backfillAcceptedFiles, backfillBranches, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, validateIntakeMeta, ensureMainIsFresh, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, auditLegacyFiles, CANONICAL_LIVE_SUFFIXES, CANONICAL_SUFFIX_RE, handleReturnToStage, findOriginalSliceBody, reconcileBranchState, _testSetRegisterFile: (p) => { REGISTER_FILE = p; }, _testSetDirs: (q, s, t) => { QUEUE_DIR = q; STAGED_DIR = s; TRASH_DIR = t; } };
+module.exports = { startGate, buildBashirPrompt, _gateTestsUpdated, _gateAbort, _checkForEvent, _parseFailedAcs, _parseSuiteSize, _updateBranchStateOnFail, BASHIR_HEARTBEAT_PATH, BASHIR_STDOUT_LOG, BASHIR_HEARTBEAT_POLL_MS, BASHIR_HEARTBEAT_STALE_MS, BASHIR_TIMEOUT_MS, REGRESSION_STDOUT_LOG, REGRESSION_STDERR_LOG, REGRESSION_TIMEOUT_MS, nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, verifyOriginAdvanced, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, restagedBootstrap, backfillArchive, backfillAcceptedFiles, backfillBranches, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, validateIntakeMeta, ensureMainIsFresh, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, auditLegacyFiles, CANONICAL_LIVE_SUFFIXES, CANONICAL_SUFFIX_RE, handleReturnToStage, findOriginalSliceBody, reconcileBranchState, _testSetRegisterFile: (p) => { REGISTER_FILE = p; }, _testSetDirs: (q, s, t) => { QUEUE_DIR = q; STAGED_DIR = s; TRASH_DIR = t; } };
