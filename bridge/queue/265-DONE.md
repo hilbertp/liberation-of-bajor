@@ -6,17 +6,17 @@ to: nog
 status: DONE
 slice_id: "265"
 branch: "slice/265"
-completed: "2026-04-29T17:25:00.000Z"
-tokens_in: 85000
-tokens_out: 8500
-elapsed_ms: 1200000
-estimated_human_hours: 3.0
+completed: "2026-04-30T15:15:00.000Z"
+tokens_in: 135000
+tokens_out: 13500
+elapsed_ms: 1080000
+estimated_human_hours: 3.5
 compaction_occurred: false
 ---
 
 ## Summary
 
-Wired the Branch Topology merge button through to a full gate-start pipeline that acquires the gate mutex, transitions branch-state to GATE_RUNNING, emits telemetry, and runs a placeholder gate that immediately (after 1s) fails with regression-fail. This is the first slice consuming Worf's `bridge/state/` contracts.
+Wired the Branch Topology merge button through to a full gate-start pipeline that acquires the gate mutex, transitions branch-state to GATE_RUNNING, emits telemetry, and runs a placeholder gate that immediately (after 1s) fails with regression-fail. Added event-driven gate subscription with explicit handlers for all 6 Ziyal gate lifecycle events. This is the first slice consuming Worf's `bridge/state/` contracts.
 
 ## Changes
 
@@ -27,6 +27,7 @@ Wired the Branch Topology merge button through to a full gate-start pipeline tha
 
 ### `dashboard/server.js`
 - Added `POST /api/gate/start` route. Validates gate.status is IDLE or ACCUMULATING (409 otherwise), validates dev.commits_ahead_of_main > 0 (409 with nothing-to-gate otherwise), calls orchestrator.startGate(), returns 202 with dev_tip_sha.
+- Added `GET /api/gate/events` endpoint. Returns the last 20 gate lifecycle events from register.jsonl filtered to the 6 Ziyal event types (gate-start, tests-updated, regression-pass, regression-fail, merge-complete, gate-abort). Lightweight polling target for client-side event dispatch.
 
 ### `dashboard/lcars-dashboard.html`
 - Replaced `console.log` no-op in `mergeButtonClick()` with `fetch('/api/gate/start', { method: 'POST' })`.
@@ -34,7 +35,14 @@ Wired the Branch Topology merge button through to a full gate-start pipeline tha
 - On 409: surfaces inline error message for 4 seconds.
 - Added gate step-card UI (3 cards: Run gate, Regression, Merge) with CSS for active/done/error states using spin glyph (↻), check (✓), and cross (✗) prefixes.
 - Step cards animate based on branch-state.gate.status polled at 5s intervals.
-- Updated health pill logic to check `_lastBranchState.gate.status === 'GATE_RUNNING'` for the BATCH GATE override.
+- **Added gate event subscription** (scope §4): polls `/api/gate/events` every 2s and dispatches to 6 named event handlers:
+  - `gate-start` → Step 1 active, health pill BATCH GATE
+  - `tests-updated` → Updates step 1 body with test count (future)
+  - `regression-pass` → Steps 1-2 done, step 3 active (future)
+  - `regression-fail` → Step 1 done, step 2 error with failure reason
+  - `merge-complete` → All steps done (future)
+  - `gate-abort` → Reset all step cards
+- Updated health pill logic for BATCH GATE override on gate-start and restore on gate completion.
 
 ### `bridge/state/gate-telemetry.js`
 - Extended VALID_EVENTS with the 6 Ziyal gate lifecycle events: gate-start, tests-updated, regression-pass, regression-fail, merge-complete, gate-abort.
@@ -51,9 +59,15 @@ Wired the Branch Topology merge button through to a full gate-start pipeline tha
 7. ✅ Changed files: bridge/orchestrator.js, dashboard/server.js, dashboard/lcars-dashboard.html, bridge/state/gate-telemetry.js (extension only), plus DONE report.
 8. ✅ Placeholder failure leaves clean recoverable state — gate.status = GATE_FAILED, mutex released, deferred slices drained.
 
+## Nog amendment — round 1 fixes
+
+1. **Committed staged changes** — The GET /api/gate/events endpoint, all 6 Ziyal event handlers (gateEventHandlers dispatch table), and the 2s pollGateEvents() loop were staged but not committed in round 1. Now committed.
+2. **Fixed releaseGateMutex reason string** — Changed `'regression-fail'` (hyphen) to `'regression_fail'` (underscore) in bridge/orchestrator.js:5454 to match Worf's contract convention for reason strings.
+
 ## Quality checks
 
 - `git diff` shows zero direct `fs.appendFile` to register.jsonl in added code.
 - `git diff` shows zero direct `fs.writeFile` to branch-state.json outside atomic-write.
 - `bridge/state/` change is additive only (VALID_EVENTS extension).
 - Worf's gate-recovery test suite: 15/15 pass.
+- All 6 Ziyal gate event handlers wired via named dispatch table (scope §4).

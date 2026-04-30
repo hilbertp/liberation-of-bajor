@@ -6088,9 +6088,88 @@
     }
   }
 
+  // ── Gate event subscription (scope §4 — all 6 Ziyal event handlers) ────────
+  // Polls /api/gate/events for lifecycle events from register.jsonl (via
+  // gate-telemetry.emit). Dispatches to named handlers keyed by event name.
+
+  let _lastSeenGateEventTs = null;
+
+  function setStepCard(id, variant, bodyText) {
+    const el = document.getElementById(id);
+    if (el) el.className = 'gate-step-card' + (variant ? ' ' + variant : '');
+    if (bodyText != null) {
+      const body = document.getElementById(id + '-body');
+      if (body) body.textContent = bodyText;
+    }
+  }
+
+  const gateEventHandlers = {
+    'gate-start': function(ev) {
+      // Step 1 → active with spin glyph (↻ via CSS ::before)
+      const stepsEl = document.getElementById('gate-steps');
+      if (stepsEl) stepsEl.style.display = '';
+      setStepCard('gate-step-1', 'active', 'Running regression gate\u2026');
+      // Health pill → BATCH GATE
+      const pill = document.getElementById('ops-health-pill');
+      const label = document.getElementById('ops-health-label');
+      if (pill) pill.className = 'health-pill degraded';
+      if (label) label.textContent = 'BATCH GATE';
+    },
+    'tests-updated': function(ev) {
+      // Future (slice 268): update step 1 body with test info
+      const s1b = document.getElementById('gate-step-1-body');
+      if (s1b && ev.count != null) s1b.textContent = 'Running regression gate\u2026 (' + ev.count + ' tests)';
+    },
+    'regression-pass': function(ev) {
+      // Future (slice 269): Step 2 → done, Step 3 → active
+      setStepCard('gate-step-1', 'done', '');
+      setStepCard('gate-step-2', 'done', 'Tests passed');
+      setStepCard('gate-step-3', 'active', 'Merging\u2026');
+    },
+    'regression-fail': function(ev) {
+      // Step 1 → done, Step 2 → error with failure reason
+      setStepCard('gate-step-1', 'done', '');
+      setStepCard('gate-step-2', 'error', ev.reason || 'Regression failed');
+      // Restore health pill (let next health poll set correct state)
+    },
+    'merge-complete': function(ev) {
+      // Future (slice 269): all steps done
+      setStepCard('gate-step-1', 'done', '');
+      setStepCard('gate-step-2', 'done', '');
+      setStepCard('gate-step-3', 'done', 'Merged to main');
+      // Restore health pill
+    },
+    'gate-abort': function(ev) {
+      // Reset all step cards and restore health pill
+      resetStepCards();
+      // Pill restoration handled by next health poll cycle
+    },
+  };
+
+  async function pollGateEvents() {
+    try {
+      const res = await fetch('/api/gate/events');
+      if (!res.ok) return;
+      const events = await res.json();
+      if (!events.length) return;
+
+      // Process only events newer than our last seen timestamp
+      for (const ev of events) {
+        if (_lastSeenGateEventTs && ev.ts <= _lastSeenGateEventTs) continue;
+        const handler = gateEventHandlers[ev.event];
+        if (handler) handler(ev);
+        _lastSeenGateEventTs = ev.ts;
+      }
+    } catch (_) { /* best-effort event polling */ }
+  }
+
   // Initial fetch + 5s polling
   fetchBranchState();
   setInterval(fetchBranchState, 5000);
+
+  // Gate event polling — 2s for responsive step-card animation
+  pollGateEvents();
+  setInterval(pollGateEvents, 2000);
 </script>
 
 </body>

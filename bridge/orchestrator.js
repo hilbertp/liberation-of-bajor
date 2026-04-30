@@ -5451,7 +5451,7 @@ function startGate() {
       writeJsonAtomic(BRANCH_STATE_PATH, state);
 
       // Release mutex
-      releaseGateMutex('regression-fail', ctx);
+      releaseGateMutex('regression_fail', ctx);
     } catch (err) {
       log('error', 'gate', { msg: 'Placeholder gate failure handler error', error: err.message });
     }

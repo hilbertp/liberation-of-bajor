@@ -1433,6 +1433,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Gate events (slice 265) — lightweight poll endpoint for client event dispatch
+  if (pathname === '/api/gate/events' && req.method === 'GET') {
+    const GATE_LIFECYCLE_EVENTS = new Set([
+      'gate-start', 'tests-updated', 'regression-pass',
+      'regression-fail', 'merge-complete', 'gate-abort',
+    ]);
+    const events = _readRegisterTail(REGISTER, 20, e => GATE_LIFECYCLE_EVENTS.has(e.event));
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(events));
+    return;
+  }
+
   // ── Branch state (slice 262) ───────────────────────────────────────────────
   if (pathname === '/api/branch-state' && req.method === 'GET') {
     try {
