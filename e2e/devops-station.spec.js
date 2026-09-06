@@ -2,7 +2,9 @@
 
 const { test, expect } = require('@playwright/test');
 
-// USER JOURNEYS for the DevOps Station redesign (slice 340) — the BEHAVIOURAL coverage the
+// USER JOURNEYS for the QA and Branches panel (slice 340; renamed from "DevOps Station" by
+// slice 382, which amended slice-340-ac-1 to the new title under an authorised change
+// declaration — the assertion is MOVED to the new name, not weakened) — the BEHAVIOURAL coverage the
 // new ACs demand. The regression guards (j-devops-station) assert the strings exist; THESE
 // drive the dashboard in a real browser and prove the feature works. Each maps to its AC.
 
@@ -10,11 +12,11 @@ const { test, expect } = require('@playwright/test');
 const AHEAD = {
   schema_version: 1,
   main: { tip_sha: 'aaaaaaa' },
-  dev: { tip_sha: 'bbbbbbb', commits_ahead_of_main: 2, commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'DevOps Station', age_s: 60 }] },
+  dev: { tip_sha: 'bbbbbbb', commits_ahead_of_main: 2, commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'Ops panel work', age_s: 60 }] },
   last_merge: { sha: 'aaaaaaa', age_s: 3600 }, gate: { status: 'IDLE' }, regression_risk: null,
   github: {
     origin_main_sha: 'aaaaaaa', origin_dev_sha: 'bbbbbbb', commits_ahead: 2, ahead: 2,
-    dev_commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'DevOps Station', age_s: 60 }],
+    dev_commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'Ops panel work', age_s: 60 }],
     promote: { sha: 'aaaaaaa', age_s: 3600 },
     rr: { score: 43, level: 'rising', commits: 2, churn: 200, churn_ins: 120, churn_del: 80, critical_files: [], breakdown: {} },
     ci: { state: 'passing', run_number: 42, url: 'https://example.test/run', head_sha: 'bbbbbbb', updated_at: '2026-06-13T12:00:00.000Z' },
@@ -33,12 +35,14 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/api/test-changes', r => r.fulfill({ json: { anyChange: false } }));
 });
 
-// ── slice-340-ac-1/2/3/5 — the panel renders as DevOps Station with the two named pipelines ──
-test('J-devops-station slice-340-ac-1 — DevOps Station panel shows Pipeline A (scan→reconcile→resolve) + Pipeline B, and the Peer Review panel', async ({ page }) => {
+// ── slice-340-ac-1/2/3/5 — the panel renders as QA and Branches with the two named pipelines ──
+test('J-devops-station slice-340-ac-1 — QA and Branches panel shows Pipeline A (scan→reconcile→resolve) + Pipeline B, and the Peer Review panel', async ({ page }) => {
   await aheadState(page); await checkClear(page);
   await page.goto('/');
 
-  await expect(page.getByText('DevOps Station', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('QA and Branches', { exact: false }).first()).toBeVisible();
+  // the retired title must not come back
+  await expect(page.getByText('DevOps Station', { exact: false })).toHaveCount(0);
   // "Pipeline A" appears in B's lock text too, so select each track by its unique subtitle.
   const pipeA = page.locator('.dvs-track', { hasText: 'test-update' });
   const pipeB = page.locator('.dvs-track', { hasText: 'run-tests' });
