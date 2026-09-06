@@ -12,11 +12,11 @@ const { test, expect } = require('@playwright/test');
 const AHEAD = {
   schema_version: 1,
   main: { tip_sha: 'aaaaaaa' },
-  dev: { tip_sha: 'bbbbbbb', commits_ahead_of_main: 2, commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'Ops panel work', age_s: 60 }] },
+  dev: { tip_sha: 'bbbbbbb', commits_ahead_of_main: 2, commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'DevOps Station', age_s: 60 }] },
   last_merge: { sha: 'aaaaaaa', age_s: 3600 }, gate: { status: 'IDLE' }, regression_risk: null,
   github: {
     origin_main_sha: 'aaaaaaa', origin_dev_sha: 'bbbbbbb', commits_ahead: 2, ahead: 2,
-    dev_commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'Ops panel work', age_s: 60 }],
+    dev_commits: [{ sha: 'bbbbbbb', slice_id: '340', subject: 'DevOps Station', age_s: 60 }],
     promote: { sha: 'aaaaaaa', age_s: 3600 },
     rr: { score: 43, level: 'rising', commits: 2, churn: 200, churn_ins: 120, churn_del: 80, critical_files: [], breakdown: {} },
     ci: { state: 'passing', run_number: 42, url: 'https://example.test/run', head_sha: 'bbbbbbb', updated_at: '2026-06-13T12:00:00.000Z' },
@@ -40,9 +40,12 @@ test('J-devops-station slice-340-ac-1 — QA and Branches panel shows Pipeline A
   await aheadState(page); await checkClear(page);
   await page.goto('/');
 
-  await expect(page.getByText('QA and Branches', { exact: false }).first()).toBeVisible();
-  // the retired title must not come back
-  await expect(page.getByText('DevOps Station', { exact: false })).toHaveCount(0);
+  const panelTitle = page.locator('.topo-panel-title').first();
+  await expect(panelTitle).toContainText('QA and Branches');
+  // the retired title must not come back — scoped to the TITLE, because the commit-log
+  // fixtures below legitimately carry "DevOps Station" as a commit subject (pinned by
+  // J-qa-and-branches trap-3) and must not satisfy or trip this check.
+  await expect(panelTitle).not.toContainText('DevOps Station');
   // "Pipeline A" appears in B's lock text too, so select each track by its unique subtitle.
   const pipeA = page.locator('.dvs-track', { hasText: 'test-update' });
   const pipeB = page.locator('.dvs-track', { hasText: 'run-tests' });
