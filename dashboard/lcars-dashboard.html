@@ -2072,7 +2072,7 @@
 
   /* ── DEVOPS STATION PANEL (slice 262) ────────────────────── */
 
-  /* ══ DevOps Station — instrument pipelines (mission-control draft, live-wired) ══ */
+  /* ══ QA and Branches — instrument pipelines (mission-control draft, live-wired) ══ */
   .gate-flow-steps {
     --dvs-idle-line:#cbd5e1; --dvs-idle-txt:#94a3b8;
     --dvs-act:#2563eb; --dvs-act-track:#dbe4ff; --dvs-act-bg:#eef3ff;
@@ -2300,7 +2300,7 @@
     cursor: not-allowed;
   }
 
-  /* ── CI status strip (DevOps Station — slice 315) ── */
+  /* ── CI status strip (QA and Branches — slice 315) ── */
   .ci-strip {
     margin-top: 10px;
     border: 1px solid var(--border);
@@ -6480,15 +6480,15 @@ body:not(.lcars-mode) .staged-details-body pre code {
     </div>
   </div>
 
-  <!-- ── DEVOPS STATION (slice 262) ──────────────────────────────────── -->
+  <!-- ── QA AND BRANCHES (slice 262; renamed slice 382) ──────────────────────────────────── -->
   <div class="topo-row">
     <div class="topo-panel" id="topo-panel">
       <div class="topo-panel-head">
         <div class="topo-head-text">
-          <span class="topo-panel-title">DevOps Station<span class="lore-tag"> (Infirmary)</span> <span class="panel-owner" data-role="bashir">QA Engineer</span></span>
+          <span class="topo-panel-title">QA and Branches<span class="lore-tag"> (Infirmary)</span> <span class="panel-owner" data-role="bashir">QA Engineer</span></span>
           <div class="topo-subtitle" id="topo-subtitle"></div>
         </div>
-        <button class="topo-collapse-btn" id="topo-collapse-btn" onclick="toggleTopoCollapse()" aria-label="Toggle DevOps Station panel">&#9662;</button>
+        <button class="topo-collapse-btn" id="topo-collapse-btn" onclick="toggleTopoCollapse()" aria-label="Toggle QA and Branches panel">&#9662;</button>
       </div>
       <div class="topo-panel-body" id="topo-panel-body">
         <div class="topo-svg-wrap" id="topo-svg-wrap"></div>
@@ -6520,7 +6520,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
       <div class="topo-mini" id="topo-mini">
         <span class="topo-mini-gauge" id="topo-mini-gauge"></span>
         <span class="topo-mini-topo">
-          <svg viewBox="0 0 280 32" width="200" height="23" role="img" aria-label="DevOps Station collapsed">
+          <svg viewBox="0 0 280 32" width="200" height="23" role="img" aria-label="QA and Branches collapsed">
             <line x1="10" y1="10" x2="270" y2="10" stroke="var(--branch-main)" stroke-width="2" />
             <line x1="10" y1="22" x2="200" y2="22" stroke="var(--branch-dev)" stroke-width="2" />
             <line x1="200" y1="22" x2="220" y2="10" stroke="var(--branch-dev)" stroke-width="1.5" stroke-dasharray="3 2" />
@@ -8040,7 +8040,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
   }
 
   function outcomeHtml(outcome, row) {
-    // Failure set = isFailureOutcome(); pipeline position lives in the DevOps Station panel.
+    // Failure set = isFailureOutcome(); pipeline position lives in the QA and Branches panel.
     if (isFailureOutcome(outcome))
       return '<span class="outcome-pill outcome-error">error</span>';
     // Honest pill (fixes the slice-318 bug): a slice is NOT a success until Nog has
@@ -8471,7 +8471,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
   }
 
   // ── Topology rollback — undo the LAST promotion to main ──────────────────
-  // The DevOps Station footer's reverse of RUN GATE & MERGE. Targets main's
+  // The QA and Branches footer's reverse of RUN GATE & MERGE. Targets main's
   // tip SHA (the last commit promoted) instead of a History row's slice, so it
   // works regardless of register slice→squash bookkeeping. Reuses the same
   // preview/dispatch endpoints (keyed by ?sha=) and the same optimistic
@@ -10512,7 +10512,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
   costCenterInterval = setInterval(fetchCosts, 30000);
   setInterval(updateCostCenterTimestamp, 1000);
 
-  // ── DevOps Station panel (slice 262) ─────────────────────────────────────
+  // ── QA and Branches panel (slice 262) ─────────────────────────────────────
   let _lastBranchState = null;
 
   // Collapse toggle — persisted in localStorage
@@ -11831,7 +11831,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
   //   RUN GATE → ① Update tests → ② Run fast regression → ③ E2E smoke test → ④ Promote
   // Any step fails → STOP, main untouched & flagged. All pass → promoted.
   // Reflects the real promote_run.phases (status + duration_s) and live elapsed.
-  // ── DevOps Station instrument: two-pipeline track renderers (live-wired) ──
+  // ── QA and Branches instrument: two-pipeline track renderers (live-wired) ──
   let _testUpdatesChecking = false;
   let _testUpdatesPending = null;   // { sha, count } when low-confidence ACs await the human
   let _dvsElapsedRAF = null;
@@ -12010,7 +12010,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
     // No trailing "merged" node — a merge is the RESULT of step ④ Promote, not a
     // separate step. Success/held state is carried by the Promote step + the caption.
     const separator = setupHtml && stepHtml ? arrow : '';
-    // ── DevOps Station — two horizontal pipelines (mission-control, live-wired) ──
+    // ── QA and Branches — two horizontal pipelines (mission-control, live-wired) ──
     const _devSha = gh && gh.origin_dev_sha ? gh.origin_dev_sha : null;
     const _checkPassed = _testUpdatesReady && _testUpdatesSha && _testUpdatesSha === _devSha;
     const _needCount = (_testUpdatesPending && _testUpdatesPending.sha === _devSha) ? _testUpdatesPending.count : 0;

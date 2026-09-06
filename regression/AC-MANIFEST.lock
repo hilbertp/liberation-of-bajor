@@ -1,6 +1,6 @@
 {
   "generator": "scripts/build-ac-manifest.js",
-  "acCount": 274,
+  "acCount": 278,
   "legacyCount": 229,
   "byTag": {
     "slice-042-ac-1": {
@@ -189,9 +189,9 @@
     },
     "slice-340-ac-1": {
       "slice": "340",
-      "text": "the first operations panel is titled \"DevOps Station\", not \"Branch Topology\"",
-      "acHash": "sha256:54145d8ac9e223dd388d5884524a07ebefcca5efdfb862b3319fe24713686ee8",
-      "source": "bridge/queue/340-DONE.md",
+      "text": "the first operations panel is titled \"QA and Branches\", not \"Branch Topology\"",
+      "acHash": "sha256:15ed4877453fa493f7e491ea09766884f4aed6b23ba8fe712872b1742a5979fa",
+      "source": "commit-trailer",
       "status": "active",
       "legacy": false
     },
@@ -1130,6 +1130,38 @@
       "source": "legacy-backfill",
       "status": "active",
       "legacy": true
+    },
+    "slice-382-ac-1": {
+      "slice": "382",
+      "text": "the first operations panel is titled \"QA and Branches\", naming what the panel shows rather than a job function",
+      "acHash": "sha256:85399f6f32a32b58829c58103339e5144eeac4b7dadd9285cb5c6feb7c885fae",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-382-ac-2": {
+      "slice": "382",
+      "text": "the accessible labels for the panel and its collapsed state use the same name as the visible title",
+      "acHash": "sha256:43a4e9422dac2f00fe2d6a10b77e1d6b1713af71d5bc39c0c168494744760f5e",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-382-ac-3": {
+      "slice": "382",
+      "text": "the owner chip and the lore tag are unchanged, and no class name, element id or data-role attribute is renamed",
+      "acHash": "sha256:f85eadb21aea4b541ea827bcf39de5c9d53fc46068acb63ba93bda18172dd4d7",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-382-ac-4": {
+      "slice": "382",
+      "text": "the acceptance criterion that pinned the previous name states the new name, carried by the authorised change declaration",
+      "acHash": "sha256:055a0fc4119fba6811aab051a56322ce993936f63fbb64b95377ee7eed8f4d72",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
     },
     "slice-901-ac-1": {
       "slice": "901",

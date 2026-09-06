@@ -14,10 +14,15 @@ const path = require('node:path');
 const DASH = path.resolve(__dirname, '..', '..', 'dashboard', 'lcars-dashboard.html');
 const html = () => fs.readFileSync(DASH, 'utf8');
 
-// @ac-hash: slice-340-ac-1 sha256:54145d8ac9e223dd388d5884524a07ebefcca5efdfb862b3319fe24713686ee8
-test('J-devops-station slice-340-ac-1 — the first ops panel is titled "DevOps Station", not "Branch Topology"', () => {
+// Slice 382 restated this criterion for the panel's new name (AC-Change-OK, Spec-Owner:
+// Philipp). Its intent is unchanged: the panel is named for what it SHOWS, never for the
+// data structure it draws — so the "not Branch Topology" half stays exactly as it was.
+// @ac-hash: slice-340-ac-1 sha256:15ed4877453fa493f7e491ea09766884f4aed6b23ba8fe712872b1742a5979fa
+test('J-devops-station slice-340-ac-1 — the first ops panel is titled "QA and Branches", not "Branch Topology"', () => {
   const src = html();
-  assert.match(src, /DevOps Station/, 'the panel must be titled DevOps Station');
+  // Anchored on the title element, not on a loose file-wide match: a comment mentioning the
+  // name no longer satisfies the criterion.
+  assert.match(src, /class="topo-panel-title">QA and Branches</, 'the panel must be titled QA and Branches');
   // the old visible heading must be gone (a lore tag/comment may mention it, but not as the panel title text node)
   assert.doesNotMatch(src, /class="[^"]*panel-title[^"]*"[^>]*>\s*Branch Topology/i);
 });

@@ -1,6 +1,6 @@
 {
   "generator": "scripts/build-coverage-map.js",
-  "guardCount": 568,
+  "guardCount": 573,
   "bySource": {
     ".github/workflows/promote.yml": [
       {
@@ -439,7 +439,11 @@
       {
         "tag": "slice-340-ac-1",
         "file": "regression/direct-controls/j-devops-station.test.js",
-        "guardAcHash": "sha256:54145d8ac9e223dd388d5884524a07ebefcca5efdfb862b3319fe24713686ee8"
+        "guardAcHash": "sha256:15ed4877453fa493f7e491ea09766884f4aed6b23ba8fe712872b1742a5979fa"
+      },
+      {
+        "tag": "slice-340-ac-1",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js"
       },
       {
         "tag": "slice-340-ac-2",
@@ -651,6 +655,26 @@
       {
         "tag": "slice-380-ac-5",
         "file": "regression/observability/j-history-chronological-order.test.js"
+      },
+      {
+        "tag": "slice-382-ac-1",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:85399f6f32a32b58829c58103339e5144eeac4b7dadd9285cb5c6feb7c885fae"
+      },
+      {
+        "tag": "slice-382-ac-2",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:43a4e9422dac2f00fe2d6a10b77e1d6b1713af71d5bc39c0c168494744760f5e"
+      },
+      {
+        "tag": "slice-382-ac-3",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:f85eadb21aea4b541ea827bcf39de5c9d53fc46068acb63ba93bda18172dd4d7"
+      },
+      {
+        "tag": "slice-382-ac-4",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:055a0fc4119fba6811aab051a56322ce993936f63fbb64b95377ee7eed8f4d72"
       },
       {
         "tag": "slice-99777-ac-1",
@@ -2145,7 +2169,7 @@
       {
         "tag": "slice-340-ac-1",
         "file": "regression/direct-controls/j-devops-station.test.js",
-        "guardAcHash": "sha256:54145d8ac9e223dd388d5884524a07ebefcca5efdfb862b3319fe24713686ee8"
+        "guardAcHash": "sha256:15ed4877453fa493f7e491ea09766884f4aed6b23ba8fe712872b1742a5979fa"
       },
       {
         "tag": "slice-340-ac-2",
@@ -2171,6 +2195,28 @@
         "tag": "slice-340-ac-6",
         "file": "regression/direct-controls/j-devops-station.test.js",
         "guardAcHash": "sha256:84c994374c163ed0b343600152a47ba7960bb36bebe31a40b1228e89a309562b"
+      }
+    ],
+    "regression/direct-controls/j-qa-and-branches.test.js": [
+      {
+        "tag": "slice-382-ac-1",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:85399f6f32a32b58829c58103339e5144eeac4b7dadd9285cb5c6feb7c885fae"
+      },
+      {
+        "tag": "slice-382-ac-2",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:43a4e9422dac2f00fe2d6a10b77e1d6b1713af71d5bc39c0c168494744760f5e"
+      },
+      {
+        "tag": "slice-382-ac-3",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:f85eadb21aea4b541ea827bcf39de5c9d53fc46068acb63ba93bda18172dd4d7"
+      },
+      {
+        "tag": "slice-382-ac-4",
+        "file": "regression/direct-controls/j-qa-and-branches.test.js",
+        "guardAcHash": "sha256:055a0fc4119fba6811aab051a56322ce993936f63fbb64b95377ee7eed8f4d72"
       }
     ],
     "regression/dispatch-execution/j-archive-rename-recorded.test.js": [
