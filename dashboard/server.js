@@ -1013,6 +1013,132 @@ function kickOffAuthoring(tags) {
   return kicked;
 }
 
+// ── Reading a draft before anything is applied (slice 356) ────────────────────
+// The overlay printed a basename and told the operator to "review it" — but no route
+// could serve the file, so the thing being blessed was never visible. This reads ONE
+// draft: its source, Julian's rationale, and — when the AC already carries a live
+// guard — the diff against that guard, because half the drafts on disk are rewrites
+// of an existing test and `<tag>.draft.<ext>` carries no target path to say so.
+//
+// Read-only by construction, and deliberately NOT built on authoringStateFor():
+// that function UNLINKS `<tag>.running` as a side effect. Reading a draft must never
+// move Julian's in-flight marker.
+const DRAFT_TAG_RE = /^slice-\d+-ac-\d+$/;
+const DIFF_MAX_LINES = 800;               // beyond this, say so rather than diff slowly
+
+// Resolve a file that must live inside regression/.drafts/. safeRepoFile() gives repo
+// containment + is-a-file; the realpath re-check then pins it to the drafts directory,
+// so neither a crafted name nor a symlink planted in .drafts/ can read outside it.
+// This is the allowlist — the crew-artifact one is left alone and still cannot reach here.
+function safeDraftFile(name) {
+  const f = safeRepoFile(path.join('regression', '.drafts', name));
+  if (!f) return null;
+  try {
+    const real = fs.realpathSync(f.abs), dir = fs.realpathSync(DRAFTS_DIR);
+    if (real !== dir && !real.startsWith(dir + path.sep)) return null;
+  } catch (_) { return null; }
+  return f;
+}
+
+// Which live guards already carry this tag, per COVERAGE.lock. Empty = unmatched.
+function liveGuardsForTag(tag) {
+  let lock;
+  try { lock = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'regression', 'COVERAGE.lock'), 'utf8')); }
+  catch (_) { return []; }
+  const out = new Set();
+  for (const guards of Object.values(lock.bySource || {})) {
+    for (const g of (guards || [])) if (g && g.tag === tag && g.file) out.add(g.file);
+  }
+  return Array.from(out).sort();
+}
+
+// Which live guard the draft is shown against. The draft name carries no target path,
+// so prefer the guard from the same suite family (.draft.spec.js is a browser test,
+// .draft.test.js a node one) and fall back to the first. Never a silent guess: the
+// response names the target and lists every other guard beside it.
+function pickDiffTarget(draftName, live) {
+  if (!live.length) return null;
+  const isSpec = /\.draft\.spec\.[cm]?js$/.test(draftName);
+  const match = live.find(f => (isSpec ? /\.spec\.[cm]?js$/ : /\.test\.[cm]?js$/).test(f));
+  return match || live[0];
+}
+
+// Minimal LCS line diff — enough to answer "is this a rewrite or a fresh guard?".
+// Common prefix/suffix are trimmed first so the quadratic table only sees the middle.
+function lineDiff(oldText, newText) {
+  const A = String(oldText).split('\n'), B = String(newText).split('\n');
+  let p = 0;
+  while (p < A.length && p < B.length && A[p] === B[p]) p++;
+  let s = 0;
+  while (s < A.length - p && s < B.length - p && A[A.length - 1 - s] === B[B.length - 1 - s]) s++;
+  const a = A.slice(p, A.length - s), b = B.slice(p, B.length - s);
+  const n = a.length, m = b.length;
+  if (n > DIFF_MAX_LINES || m > DIFF_MAX_LINES) return null;
+  const dp = [];
+  for (let i = 0; i <= n; i++) dp.push(new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const lines = [];
+  for (let k = 0; k < p; k++) lines.push({ op: ' ', text: A[k] });
+  let i = 0, j = 0, added = 0, removed = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { lines.push({ op: ' ', text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { lines.push({ op: '-', text: a[i++] }); removed++; }
+    else { lines.push({ op: '+', text: b[j++] }); added++; }
+  }
+  while (i < n) { lines.push({ op: '-', text: a[i++] }); removed++; }
+  while (j < m) { lines.push({ op: '+', text: b[j++] }); added++; }
+  for (let k = A.length - s; k < A.length; k++) lines.push({ op: ' ', text: A[k] });
+  return { lines, added, removed };
+}
+
+// The payload behind "Read the draft". `{ error }` on refusal — never a directory listing.
+function draftDetailFor(tag) {
+  if (!DRAFT_TAG_RE.test(String(tag == null ? '' : tag))) return { error: 'bad_tag' };
+  let names = [];
+  try { names = fs.readdirSync(DRAFTS_DIR); } catch (_) { return { error: 'no_draft' }; }
+  const name = names.find(f => f.startsWith(`${tag}.draft.`));
+  if (!name) return { error: 'no_draft' };
+  const f = safeDraftFile(name);
+  if (!f) return { error: 'no_draft' };
+
+  let source = '';
+  try { source = fs.readFileSync(f.abs, 'utf8'); } catch (_) { return { error: 'no_draft' }; }
+  let rationale = null;
+  const rf = safeDraftFile(`${tag}.rationale.txt`);
+  if (rf) { try { rationale = fs.readFileSync(rf.abs, 'utf8'); } catch (_) {} }
+
+  const live = liveGuardsForTag(tag);
+  const against = pickDiffTarget(name, live);
+  let diff = null, liveMissing = false;
+  if (against) {
+    const lf = safeRepoFile(against);
+    if (!lf) liveMissing = true;
+    else {
+      let liveSource = '';
+      try { liveSource = fs.readFileSync(lf.abs, 'utf8'); } catch (_) { liveMissing = true; }
+      if (!liveMissing) {
+        const d = lineDiff(liveSource, source);
+        diff = d ? { against, lines: d.lines, added: d.added, removed: d.removed } : null;
+      }
+    }
+  }
+  return {
+    tag,
+    // "unmatched", never "new": no guard carries this tag, but the draft's own name
+    // says nothing about where Julian meant it to land, so we don't claim it is a new file.
+    kind: live.length ? 'rewrite' : 'unmatched',
+    draft: { name, path: `regression/.drafts/${name}`, source, updated: f.mtime },
+    rationale,
+    live: live.map(p => ({ path: p, target: p === against })),
+    diff,
+    diffUnavailable: !!(against && !diff),
+    diffMissingLive: liveMissing,
+  };
+}
+
+
 // The three gate phases promote.yml runs, in order, before main moves. Matched by
 // step name so renaming a step's prose doesn't silently drop a phase (the match is
 // the contract; j-promote-gate-phases locks it).
@@ -3307,6 +3433,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Read one of Julian's drafts — source, rationale, and the diff against the live
+  // guard when the AC already has one. GET only: this slice adds no way to apply,
+  // move or delete anything. A malformed tag is 400, a missing draft 404 — the
+  // drafts directory is never listed.
+  if (pathname === '/api/check-test-updates/draft' && req.method === 'GET') {
+    try {
+      const u = new URL(req.url, `http://${req.headers.host}`);
+      const d = draftDetailFor(u.searchParams.get('tag') || '');
+      if (d.error) {
+        res.writeHead(d.error === 'bad_tag' ? 400 : 404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: d.error }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(d));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err) }));
+    }
+    return;
+  }
+
   // CHECK FOR TEST UPDATES → drain the flagged ACs AND kick Julian off (autonomous,
   // adversarial QA) to author the guarding test for each. Returns immediately; the drafts
   // land asynchronously in regression/.drafts/ and surface on the next GET (poll).
@@ -3861,4 +4009,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { getPinnedClassification, getTestChanges, getTestsNeeded, mergeLockRefusal, buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections, getCachedFile, getCachedDir, _cache, getCachedBridgeData, getCachedCostsData, buildBridgeData, buildCostsData, STALE_DONE_DAYS, deriveHistoryOutcome, deriveReviewStatus, authoringStateFor, kickOffAuthoring, createRevertCommit, resolveSquashSha, mapPromotePhases, parseGateFailures, isFreshPromoteCompletion, isReconciling, _promoteTtlMs };
+module.exports = { getPinnedClassification, getTestChanges, getTestsNeeded, mergeLockRefusal, buildSliceInvestigation, parseFrontmatter, extractBody, parseRoundsArray, extractRoundSections, getCachedFile, getCachedDir, _cache, getCachedBridgeData, getCachedCostsData, buildBridgeData, buildCostsData, STALE_DONE_DAYS, deriveHistoryOutcome, deriveReviewStatus, authoringStateFor, draftDetailFor, lineDiff, liveGuardsForTag, kickOffAuthoring, createRevertCommit, resolveSquashSha, mapPromotePhases, parseGateFailures, isFreshPromoteCompletion, isReconciling, _promoteTtlMs };

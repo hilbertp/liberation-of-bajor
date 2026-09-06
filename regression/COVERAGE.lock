@@ -1,6 +1,6 @@
 {
   "generator": "scripts/build-coverage-map.js",
-  "guardCount": 527,
+  "guardCount": 539,
   "bySource": {
     ".github/workflows/promote.yml": [
       {
@@ -451,6 +451,22 @@
         "guardAcHash": "sha256:f1aedeee46ff306b61d631f636ff511524e8b437262aba9e8f6ea72fdf96f0d1"
       },
       {
+        "tag": "slice-356-ac-1",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-2",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-3",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-4",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
         "tag": "slice-361-ac-1",
         "file": "regression/gate-merge/j-merge-lock-server.test.js",
         "guardAcHash": "sha256:e6953637487630b71692176dfb2df6c6c07d65a8cb36f4a9d0f9ec0abb5d2eb8"
@@ -894,6 +910,22 @@
         "tag": "slice-350-ac-1",
         "file": "regression/observability/j-s-numbering-retirement.test.js",
         "guardAcHash": "sha256:f1aedeee46ff306b61d631f636ff511524e8b437262aba9e8f6ea72fdf96f0d1"
+      },
+      {
+        "tag": "slice-356-ac-1",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-2",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-3",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-4",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
       },
       {
         "tag": "slice-361-ac-1",
@@ -1841,6 +1873,22 @@
       }
     ],
     "regression/COVERAGE.lock": [
+      {
+        "tag": "slice-356-ac-1",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-2",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-3",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
+      {
+        "tag": "slice-356-ac-4",
+        "file": "regression/gate-merge/j-check-draft-review.test.js"
+      },
       {
         "tag": "slice-365-ac-1",
         "file": "regression/gate-merge/j-unrun-test-dir.test.js",
