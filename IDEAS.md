@@ -177,3 +177,10 @@
 - **Date:** 2026-09-03
 - **Idea:** `scripts/lock-main.sh`, `scripts/unlock-main.sh` and `scripts/chmod-guard.sh` all name `$REPO/CLAUDE.md` at the repo root. That file does not exist. The file every role and every Rom workspace actually loads is `.claude/CLAUDE.md`, and it is writable today. Point the three scripts at `.claude/CLAUDE.md` (a one-line change each, Worf's surface) so the "Layer-2 locked" label on Rom's anchor becomes true. Until then, treat any edit to `.claude/CLAUDE.md` as Philipp-only by convention, not by mechanism.
 - **Why it matters:** A lock that guards the wrong path is worse than no lock: everyone believes the anchor is protected, so nobody watches it, and it is the one standing file Rom is guaranteed to have in context on every run.
+
+## One cost figure per run: price cache reads, stop the three-number problem
+
+- **Source:** Taylor (found during the slice 383 forensics, 2026-09-07)
+- **Date:** 2026-09-07
+- **Idea:** The same Rom run is priced three ways: the timesheet from Sam's invented tokens ($3.77), the register from real output tokens without cache ($3.91 via `computeCost`, list prices only), and the CLI's own `total_cost_usd` ($5.14, half of it cache reads). Slice 386 makes the CLI figure the recorded one. Follow-up: retire `computeCost`'s two-price formula entirely, add cache-read and cache-write prices from `bridge/bridge.config.json`, and show per-lane cost and minutes in Ops (the DONE event now carries `lane` and `effort`) so the twenty-run measurement in ADR-PROOF-LANES §8 needs no script.
+- **Why it matters:** Economics decisions (Max pool vs metered, effort per lane) are being made on numbers that disagree by 36%. One figure, from the source that bills us, ends that.
