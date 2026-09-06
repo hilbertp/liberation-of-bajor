@@ -3576,6 +3576,14 @@
 
 /* ── Auto-approve toggle (Proposed Improvement section) ─────────────────── */
 .queue-section-label-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* Approval provenance badge (slice 354) — how an approval was authorized. The
+   colour carries the same meaning as the words: a machine-origin approval must
+   never be mistakable for a person having clicked. */
+.approval-provenance { font-weight: 600; }
+.approval-provenance-human   { color: var(--ok); }
+.approval-provenance-policy  { color: var(--warn, #92400e); }
+.approval-provenance-machine { color: var(--err, #b91c1c); }
+.approval-provenance-legacy  { color: var(--ink-muted); font-style: italic; font-weight: 400; }
 .auto-approve-active { color: var(--ok); font-weight: 600; font-size: 10px; text-transform: none; letter-spacing: 0; }
 .auto-approve-toggle { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; text-transform: none; letter-spacing: 0; }
 .auto-approve-toggle input { position: absolute; opacity: 0; pointer-events: none; }
@@ -7081,10 +7089,61 @@ body:not(.lcars-mode) .staged-details-body pre code {
     return relevant[relevant.length - 1].event === 'ROM_PAUSED';
   }
 
+  // ── UI origin nonce (slice 354) ───────────────────────────────────────────
+  // Minted per page load by the server, injected into this document and held in
+  // server memory only. It is the whole of the proof that an approve / reject /
+  // amend request came from the dashboard rather than from a script or an agent.
+  const UI_NONCE = (typeof window.__DS9_UI_NONCE === 'string') ? window.__DS9_UI_NONCE : '';
+  function uiFetch(url, opts) {
+    const o = Object.assign({}, opts || {});
+    o.headers = Object.assign({}, o.headers || {}, { 'X-DS9-UI-Nonce': UI_NONCE });
+    return fetch(url, o);
+  }
+
   // Standing auto-approve: when on, new proposals promote to Approved Work Orders
-  // automatically (no manual review). Off by default; persisted per browser.
+  // automatically (no manual review). Off by default.
+  //
+  // The policy lives on the SERVER (slice 354). It used to live only in
+  // localStorage['ds9-auto-approve'] — per browser, and invisible to the register,
+  // so nothing on disk recorded that the policy had ever been on. That invisibility
+  // is what made the 2026-09-01 approval incident unexplainable after the fact. The
+  // server also needs it to decide what provenance to stamp on an approval, and a
+  // value the client sends could not be trusted for that.
   let autoApproveOn = false;
-  try { autoApproveOn = localStorage.getItem('ds9-auto-approve') === '1'; } catch (_) {}
+  async function loadAutoApprovePolicy() {
+    try {
+      const r = await fetch('/api/auto-approve');
+      if (r.ok) { const s = await r.json(); autoApproveOn = s.enabled === true; }
+    } catch (_) {}
+  }
+  loadAutoApprovePolicy().then(() => {
+    if (!autoApproveOn) return;                 // default state already rendered
+    try { renderQueueList(); } catch (_) {}
+    autoApproveSweep();
+  });
+
+  // How an approval was authorized, in words the operator can act on. An event
+  // that recorded nothing must NEVER render as a person: the old fallback chain
+  // ended in `personName('obrien')`, which is how 276 unattributed approvals came
+  // to be displayed as a named human who had not approved them.
+  const APPROVAL_LABELS = {
+    'human-click':         { text: 'human \u00b7 dashboard click',       cls: 'human'   },
+    'auto-approve-policy': { text: 'auto-approve policy',                 cls: 'policy'  },
+    'machine-unknown':     { text: 'machine (unattributed)',              cls: 'machine' },
+    'legacy-unattributed': { text: 'unattributed (pre-provenance)',       cls: 'legacy'  },
+    'test':                { text: 'test fixture',                        cls: 'machine' },
+  };
+  function approvalBadge(ev) {
+    const named = ev && (ev.approver || ev.actor);
+    const known = APPROVAL_LABELS[ev && ev.provenance];
+    if (known) {
+      // A named approver only adds to a claim the server already stands behind.
+      if (named && ev.provenance === 'human-click') return { text: named, cls: 'human' };
+      return known;
+    }
+    if (named) return { text: named, cls: 'human' };
+    return APPROVAL_LABELS['legacy-unattributed'];
+  }
 
   // ── Nog active state ──────────────────────────────────────────────────────
   let nogElapsedInterval = null;
@@ -9592,8 +9651,8 @@ body:not(.lcars-mode) .staged-details-body pre code {
       if (approvalEvents.length > 0) {
         const ev = approvalEvents[approvalEvents.length - 1];
         const ts = ev.ts ? new Date(ev.ts).toLocaleString() : '';
-        const approver = ev.approver || ev.actor || personName('obrien');
-        metaParts.push(`<span class="queue-expand-meta-item"><span class="queue-expand-meta-label">Approved</span> ${escHtml(approver)} &middot; ${escHtml(ts)}</span>`);
+        const badge = approvalBadge(ev);
+        metaParts.push(`<span class="queue-expand-meta-item"><span class="queue-expand-meta-label">Approved</span> <span class="approval-provenance approval-provenance-${badge.cls}" data-provenance="${escHtml(ev.provenance || 'unattributed')}">${escHtml(badge.text)}</span> &middot; ${escHtml(ts)}</span>`);
       }
       if (frontmatter.from) metaParts.push(`<span class="queue-expand-meta-item"><span class="queue-expand-meta-label">From</span> ${escHtml(frontmatter.from)}</span>`);
       if (frontmatter.depends_on) {
@@ -9700,7 +9759,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
   // Proposed → Approved and reconcile from the server. No optimistic-rollback needed.
   async function queueAccept(id) {
     try {
-      const res = await fetch('/api/bridge/staged/' + id + '/approve', { method: 'POST' });
+      const res = await uiFetch('/api/bridge/staged/' + id + '/approve', { method: 'POST' });
       if (res.ok) {
         _glideQueueMove(id, 'approved');
         if (!cachedQueueOrder.includes(id)) cachedQueueOrder = [...cachedQueueOrder, id];
@@ -9714,10 +9773,20 @@ body:not(.lcars-mode) .staged-details-body pre code {
   // ── Standing auto-approve (Proposed Improvement) ─────────────────────────────
   let _autoApproveRunning = false;
   let _autoApproveLastAt  = 0;
-  function toggleAutoApprove(on) {
+  async function toggleAutoApprove(on) {
     autoApproveOn = on;
-    try { localStorage.setItem('ds9-auto-approve', on ? '1' : '0'); } catch (_) {}
     renderQueueList();          // reflect toggle + active note immediately
+    // Record the policy on the server BEFORE sweeping. The server stamps each
+    // approval from its own view of the policy, so a sweep that raced ahead of
+    // this write would be recorded as a human clicking Approve.
+    try {
+      const res = await uiFetch('/api/auto-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !!on }),
+      });
+      if (!res.ok) { autoApproveOn = !on; renderQueueList(); return; }
+    } catch (_) { autoApproveOn = !on; renderQueueList(); return; }
     if (on) autoApproveSweep(); // promote whatever is already proposed
   }
   async function autoApproveSweep() {
@@ -9817,7 +9886,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
       try {
         const [, res] = await Promise.all([
           new Promise(r => setTimeout(r, 210)),
-          fetch('/api/bridge/staged/' + id + '/reject', { method: 'POST' }),
+          uiFetch('/api/bridge/staged/' + id + '/reject', { method: 'POST' }),
         ]);
         if (res.ok) {
           cachedStagedOrder = cachedStagedOrder.filter(sid => sid !== id);
@@ -9987,7 +10056,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
     if (!sliceDetailState) return;
     if (serviceHealthDown) return;
     try {
-      const res = await fetch(`/api/bridge/staged/${sliceDetailState.id}/approve`, { method: 'POST' });
+      const res = await uiFetch(`/api/bridge/staged/${sliceDetailState.id}/approve`, { method: 'POST' });
       if (res.ok) {
         closeSliceDetail();
         fetchCombinedQueue();
@@ -10001,7 +10070,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
     const note = prompt("Refinement note for the dev lead:");
     if (note == null) return;
     try {
-      const res = await fetch(`/api/bridge/staged/${sliceDetailState.id}/amend`, {
+      const res = await uiFetch(`/api/bridge/staged/${sliceDetailState.id}/amend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ note: note || 'Needs refinement' }),
@@ -10018,7 +10087,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
     if (!sliceDetailState) return;
     if (!confirm(`Reject S${sliceDetailState.id}? This cannot be undone.`)) return;
     try {
-      const res = await fetch(`/api/bridge/staged/${sliceDetailState.id}/reject`, { method: 'POST' });
+      const res = await uiFetch(`/api/bridge/staged/${sliceDetailState.id}/reject`, { method: 'POST' });
       if (res.ok) {
         closeSliceDetail();
         fetchCombinedQueue();

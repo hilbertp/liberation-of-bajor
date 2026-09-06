@@ -17,6 +17,7 @@ const { ensureRuntimeState, isVolatileRuntimePath } = require('./state/seed-runt
 // dashboard, so the button that offers the action and the code that performs it
 // cannot disagree. (Slice 370.)
 const { evaluateReturnToStage } = require('./return-to-stage-eligibility');
+const approvalProvenance = require('./approval-provenance');
 
 // ---------------------------------------------------------------------------
 // Config
@@ -5660,6 +5661,24 @@ function poll() {
   const title = (meta && meta.title) || null;
   const goal  = (meta && meta.goal && meta.goal.trim()) || null;
 
+  // ── Approval provenance gate (slice 354) ─────────────────────────────────
+  // Advisory by default — logged and flagged, dispatch proceeds — behind the
+  // same kind of env flag as AC_CUSTODY_ENFORCE. Philipp flips
+  // APPROVAL_PROVENANCE_ENFORCE=1 once the queue is clean.
+  const provVerdict = checkDispatchProvenance(id, meta, pendingPath);
+  if (!provVerdict.ok) {
+    if (approvalProvenance.isEnforcing()) {
+      parkUnprovenancedSlice(id, pendingPath, provVerdict);
+      return; // Continue poll loop on the next tick.
+    }
+    registerEvent(id, 'APPROVAL_UNVERIFIED', { reason: provVerdict.reason, enforced: false });
+    log('warn', 'dispatch', {
+      id,
+      msg: `Slice ${id} has no valid approval provenance (${provVerdict.reason}) — dispatching anyway (advisory mode)`,
+      reason: provVerdict.reason,
+    });
+  }
+
   // Derive sibling paths.
   const inProgressPath = path.join(QUEUE_DIR, `${id}-IN_PROGRESS.md`);
   const donePath       = path.join(QUEUE_DIR, `${id}-DONE.md`);
@@ -6479,6 +6498,225 @@ if (require.main === module) {
 // signals and only need 4 fields (id, title, from, to); the priority +
 // created pair was captured in the original COMMISSIONED event.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Approval provenance at dispatch (slice 354)
+//
+// Securing only the HTTP endpoint would have been theatre. This orchestrator has
+// never read HUMAN_APPROVAL — `grep -c HUMAN_APPROVAL` returns 0 — and dispatch
+// is driven purely by a file existing in bridge/queue/ with a -QUEUED.md or
+// -PENDING.md suffix, reconstructing the order from mtimes when queue-order.json
+// is gone. So `printf ... > bridge/queue/999-QUEUED.md` commissioned Rom with no
+// HTTP request, no approval event and no human anywhere. The enforcement point
+// has to be here.
+// ---------------------------------------------------------------------------
+
+/** Repo root, derived from QUEUE_DIR so `_testSetDirs` redirects it with everything else. */
+function provenanceRoot() {
+  return path.resolve(QUEUE_DIR, '..', '..');
+}
+
+/**
+ * The slice's root id: an amendment brief carries `references: "NNN"` and its
+ * parent is the slice history knows. A Nog rework round keeps the same id, so
+ * nothing extra is needed for that case.
+ *
+ * This is an id LOOKUP, not a permission. Round 1 of this slice let its result
+ * grandfather anything — see checkDispatchProvenance for why that was a free
+ * pass and what now bounds it.
+ */
+function provenanceRootId(id, meta) {
+  const ref = meta && meta.references;
+  if (ref && ref !== 'null') return String(ref).trim();
+  return String(id);
+}
+
+/**
+ * True when the register knew one of these ids before the cutover.
+ *
+ * No recency condition, and matching ANY event rather than an approval: 64 of
+ * 274 commissioned slices have no approval event at all, and `refined` and
+ * `rejected` share the HUMAN_APPROVAL event name, so counting approval events
+ * would misjudge both populations. Existing before the cutover is the question,
+ * and any event answers it.
+ */
+function hasPreCutoverHistory(rootId, id) {
+  const cutover = Date.parse(approvalProvenance.cutoverTs(provenanceRoot()));
+  if (!Number.isFinite(cutover)) return false;
+  for (const line of _getRegLines(REGISTER_FILE)) {
+    let ev;
+    try { ev = JSON.parse(line); } catch (_) { continue; }
+    const evId = String(ev.slice_id != null ? ev.slice_id : ev.id);
+    if (evId !== String(rootId) && evId !== String(id)) continue;
+    const ts = Date.parse(ev.ts);
+    if (Number.isFinite(ts) && ts < cutover) return true;
+  }
+  return false;
+}
+
+/**
+ * Does the QUEUE FILE itself predate the cutover?
+ *
+ * Two signals, and only one of them is load-bearing. The frontmatter `created`
+ * is written by whoever wrote the file, so an attacker sets it to anything —
+ * it can therefore only ever ADD a condition, never satisfy one on its own.
+ * The filesystem mtime is the signal that costs something to fake: a file
+ * printf'd into the queue carries an mtime of *now*, whatever its frontmatter
+ * claims. `touch -t` still defeats it, which is the honest limit of a local
+ * server — but it is a deliberate second act, and it is the difference between
+ * a one-line bypass and one that has to lie about the filesystem too.
+ *
+ * Fails closed: no path, no stat, no answer ⇒ not pre-cutover.
+ */
+function fileIsPreCutover(pendingPath, meta, cutoverMs) {
+  const created = meta && meta.created ? Date.parse(meta.created) : NaN;
+  if (Number.isFinite(created) && created >= cutoverMs) return false;
+  if (!pendingPath) return false;
+  try {
+    return fs.statSync(pendingPath).mtimeMs < cutoverMs;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
+ * checkDispatchProvenance(id, meta, pendingPath) → { ok, provenance, reason, legacy }
+ *
+ * `ok` means this slice may dispatch. A valid stamp passes. An unstamped slice
+ * grandfathers only in the two shapes below — that narrowness is what makes
+ * "a machine may not approve work" true going forward without rewriting the
+ * history of a queue that is already full.
+ *
+ * ── Why the parent path is bounded (round 2 fix) ─────────────────────────────
+ * Round 1 asked `hasPreCutoverHistory(provenanceRootId(id, meta), id)` — one
+ * question covering both the slice and its parent. That made `references:` a
+ * free pass: 274 ids already carry pre-cutover history, so ANY of them worked
+ * as a claimed parent, and the brief's own attack — `printf ... >
+ * bridge/queue/999-QUEUED.md` — still commissioned Rom post-cutover with one
+ * extra frontmatter line. `references` is not obscure; it is the normal shape
+ * of an amendment, so a machine writing a queue file is MORE likely to include
+ * it than not.
+ *
+ * The two shapes are now separate questions:
+ *   1. the slice's OWN id is known to the register from before the cutover.
+ *      Unconditional: an attacker cannot manufacture that for a fresh id
+ *      without forging a back-dated register line, which leaves its own trace.
+ *   2. a claimed PARENT's id is known from before the cutover — but only when
+ *      the queue file itself also predates the cutover. A genuine pre-cutover
+ *      amendment satisfies this; a file written today does not.
+ *
+ * Shape 2 cannot rescue a slice that has already dispatched once, and does not
+ * need to: anything that has been through a round has its own history, so
+ * shape 1 covers every rework round (trap 1 stays respected — no freshness,
+ * count or consumption rule anywhere).
+ */
+function checkDispatchProvenance(id, meta, pendingPath) {
+  const root = provenanceRoot();
+  const verdict = approvalProvenance.verifyStampedMeta(root, meta, id);
+  if (verdict.ok) return { ok: true, provenance: verdict.provenance, reason: null, legacy: false };
+
+  const legacy = (reason) => ({
+    ok: true,
+    provenance: approvalProvenance.PROVENANCE.LEGACY_UNATTRIBUTED,
+    reason,
+    legacy: true,
+  });
+
+  if (verdict.reason === 'unstamped') {
+    if (hasPreCutoverHistory(id, id)) return legacy('pre-cutover');
+
+    const rootId = provenanceRootId(id, meta);
+    if (rootId !== String(id)) {
+      const cutoverMs = Date.parse(approvalProvenance.cutoverTs(root));
+      if (Number.isFinite(cutoverMs)
+          && fileIsPreCutover(pendingPath, meta, cutoverMs)
+          && hasPreCutoverHistory(rootId, rootId)) {
+        return legacy('pre-cutover-parent');
+      }
+    }
+  }
+  return { ok: false, provenance: verdict.provenance, reason: verdict.reason, legacy: false };
+}
+
+/**
+ * Hold an unprovenanced slice and hand it to O'Brien.
+ *
+ * Never trash. validateIntakeMeta's failure path moves the file to TRASH_DIR,
+ * and a trash-on-failure rule here would have wiped real work: the queue holds
+ * 17 PARKED and 23 DONE files, and most of what is in flight predates any stamp.
+ * The file is renamed to an inert suffix the poll loop does not scan, so the
+ * slice stops moving and stays readable.
+ *
+ * PARKED is the intended resting place; a slice on a rework round already owns
+ * `{id}-PARKED.md` (handleNogReturn writes a fresh QUEUED beside it and leaves
+ * the parked copy in place), so STUCK — which already means "escalated to
+ * O'Brien" here — takes the collision rather than clobbering it.
+ */
+function parkUnprovenancedSlice(id, pendingPath, verdict) {
+  const parkedPath = path.join(QUEUE_DIR, `${id}-PARKED.md`);
+  const heldPath   = fs.existsSync(parkedPath) ? path.join(QUEUE_DIR, `${id}-STUCK.md`) : parkedPath;
+  const heldAs     = path.basename(heldPath).replace(/^\d+-/, '').replace(/\.md$/, '');
+
+  let sliceContent = '';
+  try { sliceContent = fs.readFileSync(pendingPath, 'utf-8'); } catch (_) {}
+
+  try {
+    fs.renameSync(pendingPath, heldPath);
+    log('info', 'state', { id, from: 'QUEUED', to: heldAs, reason: 'approval_provenance_missing' });
+  } catch (err) {
+    log('error', 'dispatch', { id, msg: 'Failed to park unprovenanced slice', error: err.message });
+    return;
+  }
+
+  const escalationsDir = path.resolve(QUEUE_DIR, '..', 'escalations');
+  const escalation = [
+    '---',
+    `id: "${id}"`,
+    `title: "APPROVAL PROVENANCE — slice ${id} was not approved through the dashboard"`,
+    'from: orchestrator',
+    'to: obrien',
+    `created: "${new Date().toISOString()}"`,
+    `reason: "${verdict.reason}"`,
+    `held_as: "${heldAs}"`,
+    '---',
+    '',
+    '## Held, not dispatched',
+    '',
+    `Slice ${id} reached the queue without approval provenance this installation`,
+    `signed (reason: ${verdict.reason}), and its id has no register history before the`,
+    `cutover (${approvalProvenance.cutoverTs(provenanceRoot())}), so it is not legacy work.`,
+    '',
+    'A legitimate approval is a click in the dashboard or the standing auto-approve',
+    'policy; both stamp the queue file. A slice without a stamp was written by',
+    'something else — a script, an agent, or a hand-edited file.',
+    '',
+    `The slice is held at bridge/queue/${path.basename(heldPath)}. Nothing was trashed.`,
+    'Re-stage it and approve it through the dashboard to dispatch it.',
+    '',
+    '## Slice file contents',
+    '',
+    sliceContent,
+  ].join('\n');
+
+  try {
+    fs.mkdirSync(escalationsDir, { recursive: true });
+    fs.writeFileSync(path.join(escalationsDir, `${id}-PROVENANCE-ESCALATION.md`), escalation);
+  } catch (err) {
+    log('error', 'dispatch', { id, msg: 'Failed to write provenance escalation file', error: err.message });
+  }
+
+  registerEvent(id, 'APPROVAL_PROVENANCE_BLOCKED', {
+    reason: verdict.reason,
+    held_as: heldAs,
+    enforced: true,
+  });
+  log('warn', 'dispatch', {
+    id,
+    msg: `Slice ${id} held — no valid approval provenance (${verdict.reason}); escalated to O'Brien`,
+    reason: verdict.reason,
+  });
+  print(`  ${C.red}${SYM.cross}${C.reset} Slice ${id} held${SYM.dash}no approval provenance (${verdict.reason}) — escalated to O'Brien`);
+}
 
 function validateIntakeMeta(meta) {
   const isApendmentFile = !!(meta && (
@@ -7930,4 +8168,4 @@ function mergeDevToMain() {
 // Exports — for use by helper scripts (e.g. bridge/next-id.js)
 // ---------------------------------------------------------------------------
 
-module.exports = { startGate, abortGate, buildBashirPrompt, buildBashirNonGatePrompt, invokeBashirNonGate, _gateTestsUpdated, _gateAbort, _checkForEvent, _parseFailedAcs, _parseSuiteSize, _updateBranchStateOnFail, mergeDevToMain, BASHIR_HEARTBEAT_PATH, BASHIR_NON_GATE_PROMPT_TEMPLATE, BASHIR_STDOUT_LOG, BASHIR_HEARTBEAT_POLL_MS, BASHIR_HEARTBEAT_STALE_MS, BASHIR_TIMEOUT_MS, BASHIR_NON_GATE_DEFAULT_TIMEOUT_MS, REGRESSION_STDOUT_LOG, REGRESSION_STDERR_LOG, REGRESSION_TIMEOUT_MS, nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, verifyOriginAdvanced, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, isTerminal, depsAreMet, restagedBootstrap, backfillArchive, backfillAcceptedFiles, backfillBranches, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, recordArchivedQueueRename, validateIntakeMeta, ensureIntegrationIsFresh, ensureMainIsFresh: ensureIntegrationIsFresh, fastForwardIntegrationRef, branchNamesFrom, INTEGRATION_BRANCH, TRUNK_BRANCH, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, auditLegacyFiles, CANONICAL_LIVE_SUFFIXES, CANONICAL_SUFFIX_RE, handleReturnToStage, findOriginalSliceBody, reconcileBranchState, squashSliceToDev, drainDeferredAfterGate, readSliceMeta, provisionWorkspaceDeps, _testSetRegisterFile: (p) => { REGISTER_FILE = p; }, _testSetDirs: (q, s, t) => { QUEUE_DIR = q; STAGED_DIR = s; TRASH_DIR = t; }, _testSetProjectDir: (dir) => { PROJECT_DIR = dir; BRANCH_STATE_PATH = path.join(dir, 'bridge', 'state', 'branch-state.json'); }, _testResetDeferredEmitted: () => { _deferredEmitted.clear(); }, _testGetDeferredEmitted: () => _deferredEmitted, hasTerminalLandedEvent, countUnreadableVerdicts, unreadableBackoffMs, retryBackoffElapsed, MAX_UNREADABLE_ATTEMPTS, UNREADABLE_BACKOFF_MS, porcelainPaths, isVolatileRuntimePath, recoverRuntimeStateAfterGit, stageablePathsFrom, shQuote, _testResetRefusalEmitted: () => { _refusalEmitted.clear(); }, _testGetRefusalEmitted: () => _refusalEmitted };
+module.exports = { checkDispatchProvenance, parkUnprovenancedSlice, hasPreCutoverHistory, fileIsPreCutover, provenanceRootId, parseFrontmatter, handleNogReturn, startGate, abortGate, buildBashirPrompt, buildBashirNonGatePrompt, invokeBashirNonGate, _gateTestsUpdated, _gateAbort, _checkForEvent, _parseFailedAcs, _parseSuiteSize, _updateBranchStateOnFail, mergeDevToMain, BASHIR_HEARTBEAT_PATH, BASHIR_NON_GATE_PROMPT_TEMPLATE, BASHIR_STDOUT_LOG, BASHIR_HEARTBEAT_POLL_MS, BASHIR_HEARTBEAT_STALE_MS, BASHIR_TIMEOUT_MS, BASHIR_NON_GATE_DEFAULT_TIMEOUT_MS, REGRESSION_STDOUT_LOG, REGRESSION_STDERR_LOG, REGRESSION_TIMEOUT_MS, nextSliceId, getQueueSnapshot, classifyNoReportExit, rescueWorktree, isRomSelfTerminated, verifyRomActuallyWorked, assertMergeIntegrity, verifyOriginAdvanced, latestRestagedTs, latestAttemptStartTs, hasReviewEvent, hasMergedEvent, isTerminal, depsAreMet, restagedBootstrap, backfillArchive, backfillAcceptedFiles, backfillBranches, acceptAndMerge, archiveAcceptedSlice, archiveSiblingStateFiles, recordArchivedQueueRename, validateIntakeMeta, ensureIntegrationIsFresh, ensureMainIsFresh: ensureIntegrationIsFresh, fastForwardIntegrationRef, branchNamesFrom, INTEGRATION_BRANCH, TRUNK_BRANCH, extractSessionId, shouldForceFreshSession, appendRoundEntry, computeNextAttemptNumber, auditLegacyFiles, CANONICAL_LIVE_SUFFIXES, CANONICAL_SUFFIX_RE, handleReturnToStage, findOriginalSliceBody, reconcileBranchState, squashSliceToDev, drainDeferredAfterGate, readSliceMeta, provisionWorkspaceDeps, _testSetRegisterFile: (p) => { REGISTER_FILE = p; }, _testSetDirs: (q, s, t) => { QUEUE_DIR = q; STAGED_DIR = s; TRASH_DIR = t; }, _testSetProjectDir: (dir) => { PROJECT_DIR = dir; BRANCH_STATE_PATH = path.join(dir, 'bridge', 'state', 'branch-state.json'); }, _testResetDeferredEmitted: () => { _deferredEmitted.clear(); }, _testGetDeferredEmitted: () => _deferredEmitted, hasTerminalLandedEvent, countUnreadableVerdicts, unreadableBackoffMs, retryBackoffElapsed, MAX_UNREADABLE_ATTEMPTS, UNREADABLE_BACKOFF_MS, porcelainPaths, isVolatileRuntimePath, recoverRuntimeStateAfterGit, stageablePathsFrom, shQuote, _testResetRefusalEmitted: () => { _refusalEmitted.clear(); }, _testGetRefusalEmitted: () => _refusalEmitted };

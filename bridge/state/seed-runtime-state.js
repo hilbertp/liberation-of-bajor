@@ -115,13 +115,21 @@ const RUNTIME_FILES = [
   // the tree exactly like the files above and the autocommit swept it (3f4126a).
   // Restored, not blanked: a ruling is a human decision and no tick recreates it.
   { rel: 'regression/AC-DECISIONS.json',    restore: true,  seed: () => '{}\n' },
+  // slice 354: the standing auto-approve policy, moved off localStorage onto the
+  // server so the register can show when it was on. Never restored — rebuilding
+  // `enabled: true` from history would re-arm an approval policy that nobody
+  // pressed, which is the exact failure this slice exists to stop.
+  { rel: 'bridge/state/auto-approve.json', restore: false, seed: () => JSON.stringify({ enabled: false, ts: null }, null, 2) + '\n' },
 ];
 
 // Paths the pipeline rewrites continuously and git must never be asked to carry.
 // Kept next to RUNTIME_FILES so the ignore rules, the seeder and the autocommit
 // filter all read from one list. Directory prefixes match everything beneath them.
 const VOLATILE_PREFIXES = ['bridge/trash/'];
-const VOLATILE_EXTRA = ['bridge/.usage-snapshot.json', 'bridge/register.jsonl'];
+// bridge/state/approval-secret is the HMAC key for approval stamps: minted on
+// first use, never seeded (a fixed seed is not a secret) and never committed.
+const VOLATILE_EXTRA = ['bridge/.usage-snapshot.json', 'bridge/register.jsonl',
+                        'bridge/state/approval-secret', 'bridge/state/approval-cutover.json'];
 
 // bridge/trash/ holds two populations. Nearly all of it is volatile markers the
 // pipeline sweeps aside — `nog-active.json.done`, `slice.md.replaced`,

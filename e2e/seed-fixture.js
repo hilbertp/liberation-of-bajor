@@ -182,6 +182,12 @@ function seedFixture() {
   w(path.join(b, 'nog-active.json'), '{}');
   w(path.join(b, 'state', 'branch-state.json'),
     JSON.stringify({ gate: { status: 'IDLE' }, dev: { commits_ahead_of_main: 0 } }, null, 2));
+  // Slice 354: the standing auto-approve policy moved out of localStorage onto the
+  // server, so it is fixture state now and has to be seeded like any other. Off is
+  // the deterministic start every journey assumes — with it on, a page load sweeps
+  // every staged proposal to QUEUED before the first assertion runs.
+  w(path.join(b, 'state', 'auto-approve.json'),
+    JSON.stringify({ enabled: false, ts: null }, null, 2));
 
   // Two staged proposals → Engineering Queue "Proposed Improvement" section.
   w(path.join(b, 'staged', '9001-STAGED.md'), stagedSlice('9001', 'E2E — first proposal'));
@@ -200,6 +206,11 @@ function resetQueueState() {
   }
   w(path.join(b, 'staged-order.json'), JSON.stringify(['9001', '9002']));
   w(path.join(b, 'queue-order.json'), '[]');
+  // Slice 354: the auto-approve policy now outlives the browser context that set
+  // it, so a journey that flips it on leaves it on for whatever runs next. Clearing
+  // it is part of restoring the staged proposals, not a separate concern.
+  w(path.join(b, 'state', 'auto-approve.json'),
+    JSON.stringify({ enabled: false, ts: null }, null, 2));
   w(path.join(b, 'staged', '9001-STAGED.md'), stagedSlice('9001', 'E2E — first proposal'));
   w(path.join(b, 'staged', '9002-STAGED.md'), stagedSlice('9002', 'E2E — second proposal'));
 }

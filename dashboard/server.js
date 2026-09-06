@@ -6,7 +6,11 @@ const path = require('path');
 const { execFileSync, execFile } = require('child_process');
 
 const PORT         = process.env.DASHBOARD_PORT ? parseInt(process.env.DASHBOARD_PORT, 10) : 4747;
-const HOST         = process.env.DASHBOARD_HOST ?? '0.0.0.0';
+// Loopback by default. This server is unauthenticated and its POST surface moves
+// slices into the dispatch queue; on 0.0.0.0 it offered that surface to every
+// interface the machine has. DASHBOARD_HOST still opens it up for anyone who
+// genuinely needs it (slice 354).
+const HOST         = process.env.DASHBOARD_HOST ?? '127.0.0.1';
 // REPO_ROOT defaults to the repo (one above dashboard/). E2E/integration harnesses
 // set DASHBOARD_REPO_ROOT to point the data layer (bridge/, .claude/, regression/) at a
 // deterministic fixture, while the frontend (lcars-dashboard.html) is still served from __dirname.
@@ -1883,10 +1887,91 @@ function readRegister() {
   return parsed.map(ev => translateEvent(ev)).filter(Boolean);
 }
 
+// ── Approval provenance (slice 354) ──────────────────────────────────────────
+//
+// Loaded lazily and off REPO_ROOT, like the other bridge/ dependencies, so a
+// harness that points REPO_ROOT at a fixture gets the fixture's re-export shim
+// and the module reads that fixture's state directory. Lazy because only the
+// approval endpoints need it — a harness that never approves needs no shim.
+function approvalProvenance() {
+  return require(path.join(REPO_ROOT, 'bridge', 'approval-provenance'));
+}
+
+// The UI nonce. Minted per page load, held HERE and nowhere else — never written
+// to disk, so a stamp cannot be produced by reading a file. A request that
+// carries a live one came from a page this server served.
+//
+// Deliberately NOT consumed on use: one page load approves many slices (the
+// auto-approve sweep walks the whole proposal list), and a consume-on-use rule
+// would also be the kind of freshness rule that kills a slice's second review
+// round. Validity is time-boxed instead.
+const UI_NONCE_TTL_MS = 12 * 60 * 60 * 1000;
+const UI_NONCE_HEADER = 'x-ds9-ui-nonce';
+const _uiNonces = new Map(); // nonce → expiry ms
+
+function mintUiNonce() {
+  const now = Date.now();
+  for (const [n, exp] of _uiNonces) if (exp <= now) _uiNonces.delete(n);
+  const nonce = crypto.randomBytes(24).toString('hex');
+  _uiNonces.set(nonce, now + UI_NONCE_TTL_MS);
+  return nonce;
+}
+
+function uiNonceIsLive(req) {
+  const nonce = req.headers[UI_NONCE_HEADER];
+  if (!nonce || typeof nonce !== 'string') return false;
+  const exp = _uiNonces.get(nonce);
+  if (!exp) return false;
+  if (exp <= Date.now()) { _uiNonces.delete(nonce); return false; }
+  return true;
+}
+
+/** Inject the nonce into the served page. Tolerates a document with no <head>. */
+function injectUiNonce(html) {
+  const tag = `<script>window.__DS9_UI_NONCE=${JSON.stringify(mintUiNonce())};</script>`;
+  const headClose = html.indexOf('</head>');
+  if (headClose !== -1) return html.slice(0, headClose) + tag + html.slice(headClose);
+  return tag + html;
+}
+
+/**
+ * How this request was authorized — decided entirely from server-side state.
+ *
+ * There is no client field here on purpose. The only two facts the server can
+ * know are whether the request carried a nonce it minted, and whether the
+ * standing policy is on; everything else would be the caller asserting its own
+ * humanity, which is the thing that failed on 2026-09-01. With the policy ON the
+ * server cannot tell a sweep from a click, so it credits the policy — the weaker
+ * claim, and the true one, since the policy authorized that click too.
+ */
+function classifyApprovalOrigin(req) {
+  const { PROVENANCE, readAutoApprove } = approvalProvenance();
+  if (!uiNonceIsLive(req)) {
+    return { ok: false, provenance: PROVENANCE.MACHINE_UNKNOWN, reason: 'no-ui-nonce' };
+  }
+  const policyOn = readAutoApprove(REPO_ROOT).enabled;
+  return {
+    ok: true,
+    provenance: policyOn ? PROVENANCE.AUTO_APPROVE_POLICY : PROVENANCE.HUMAN_CLICK,
+    reason: null,
+  };
+}
+
 // ── Register writer ──────────────────────────────────────────────────────────
+// The single choke point for this server's events, and therefore the place that
+// enforces "an approval event says how it was authorized". A HUMAN_APPROVAL that
+// arrives here without provenance is recorded as machine-origin rather than left
+// blank — a blank field is what let an unattributed event be read as a person.
+// Additive only: docs/contracts/slice-pipeline.md §7.2 requires consumers to
+// ignore fields they do not recognise.
+const PROVENANCED_EVENTS = new Set(['HUMAN_APPROVAL', 'APPROVAL_REFUSED', 'AUTO_APPROVE_POLICY']);
+
 function writeRegisterEvent(event) {
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n';
-  fs.appendFileSync(REGISTER, line, 'utf8');
+  const full = { ts: new Date().toISOString(), ...event };
+  if (PROVENANCED_EVENTS.has(full.event) && !full.provenance) {
+    full.provenance = approvalProvenance().PROVENANCE.MACHINE_UNKNOWN;
+  }
+  fs.appendFileSync(REGISTER, JSON.stringify(full) + '\n', 'utf8');
 }
 
 // ── Return to stage — one action, one implementation ─────────────────────────
@@ -2542,8 +2627,10 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/' || pathname === '/index.html') {
     fs.readFile(DASHBOARD, (err, data) => {
       if (err) { res.writeHead(500); res.end('Internal Server Error'); return; }
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(data);
+      // Every page load gets its own nonce, and the page is the only place it
+      // appears — see mintUiNonce().
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(injectUiNonce(data.toString('utf8')));
     });
     return;
   }
@@ -2663,6 +2750,54 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Standing auto-approve policy (slice 354) ──────────────────────────────
+  // Server-side state, not localStorage. The server has to own it for two
+  // reasons: it is what decides the provenance stamped on every approval, and
+  // turning it on is a policy decision the log has to be able to show. While it
+  // lived only in localStorage['ds9-auto-approve'] it was per-browser and
+  // invisible — which is why nobody could reconstruct the 2026-09-01 incident.
+  if (pathname === '/api/auto-approve') {
+    const { readAutoApprove, writeAutoApprove, PROVENANCE } = approvalProvenance();
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(readAutoApprove(REPO_ROOT)));
+      return;
+    }
+    if (req.method === 'POST') {
+      // Flipping the policy is itself an approval-grade act, so it takes the
+      // same UI-origin proof.
+      if (!uiNonceIsLive(req)) {
+        writeRegisterEvent({
+          event: 'APPROVAL_REFUSED', slice_id: null, action: 'auto-approve-policy',
+          provenance: PROVENANCE.MACHINE_UNKNOWN, reason: 'no-ui-nonce',
+        });
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'policy changes must originate from the dashboard UI', reason: 'no-ui-nonce' }));
+        return;
+      }
+      const payload = await readJsonBody(req);
+      if (!payload || typeof payload.enabled !== 'boolean') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing required boolean field: enabled' }));
+        return;
+      }
+      const state = writeAutoApprove(REPO_ROOT, payload.enabled);
+      writeRegisterEvent({
+        event: 'AUTO_APPROVE_POLICY',
+        slice_id: null,
+        action: state.enabled ? 'on' : 'off',
+        enabled: state.enabled,
+        provenance: PROVENANCE.HUMAN_CLICK,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(state));
+      return;
+    }
+    res.writeHead(405, { 'Content-Type': 'text/plain' });
+    res.end('Method Not Allowed');
+    return;
+  }
+
   const stagedMatch = pathname.match(/^\/api\/bridge\/staged\/(\d+)\/(approve|slice|amend|reject|update-body)$/);
   if (stagedMatch) {
     if (req.method !== 'POST') {
@@ -2673,6 +2808,29 @@ const server = http.createServer(async (req, res) => {
 
     const id     = stagedMatch[1];
     const action = stagedMatch[2];
+
+    // ── UI origin gate (slice 354) ────────────────────────────────────────
+    // The three actions that write an approval event are refused unless the
+    // request came from a page this server served. Checked before the staged
+    // file is even looked for, so a refusal changes nothing and reveals nothing
+    // about which slices exist. `update-body` is an editing action, not an
+    // approval, and keeps its existing contract.
+    if (action === 'approve' || action === 'slice' || action === 'amend' || action === 'reject') {
+      const origin = classifyApprovalOrigin(req);
+      if (!origin.ok) {
+        writeRegisterEvent({
+          event: 'APPROVAL_REFUSED',
+          slice_id: id,
+          action,
+          provenance: origin.provenance,
+          reason: origin.reason,
+        });
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'approval must originate from the dashboard UI', reason: origin.reason }));
+        return;
+      }
+      req._approvalProvenance = origin.provenance;
+    }
 
     // Find the staged file (could be STAGED or NEEDS_APENDMENT or legacy suffix)
     const stagedPath     = path.join(STAGED_DIR, `${id}-STAGED.md`);
@@ -2691,8 +2849,15 @@ const server = http.createServer(async (req, res) => {
 
     if (action === 'approve' || action === 'slice') {
       try {
+        // The stamp travels with the work: the orchestrator dispatches off a file
+        // on disk, never off a register event, so provenance has to be IN the
+        // file. Every requeue path either updateFrontmatter()s it (unknown keys
+        // survive) or renames the file whole, so the stamp outlives every rework
+        // round — which is what lets round 2 dispatch with no new approval.
+        const provenance = req._approvalProvenance;
+        const stamp = approvalProvenance().stampFrontmatter(REPO_ROOT, { id, provenance });
         let content = fs.readFileSync(filePath, 'utf8');
-        content = updateFrontmatter(content, { status: 'QUEUED' });
+        content = updateFrontmatter(content, { status: 'QUEUED', ...stamp });
         fs.writeFileSync(path.join(QUEUE_DIR, `${id}-QUEUED.md`), content, 'utf8');
         try { fs.renameSync(filePath, path.join(TRASH_DIR, path.basename(filePath) + '.approved')); } catch (_) {}
         // Add to queue order (apendments go to front, others to end)
@@ -2705,7 +2870,7 @@ const server = http.createServer(async (req, res) => {
           order.push(id);
         }
         writeQueueOrder(order);
-        writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'approved' });
+        writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'approved', provenance });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {
@@ -2729,7 +2894,7 @@ const server = http.createServer(async (req, res) => {
         const destPath = path.join(STAGED_DIR, `${id}-NEEDS_APENDMENT.md`);
         fs.writeFileSync(destPath, content, 'utf8');
         if (filePath !== destPath) { try { fs.renameSync(filePath, path.join(TRASH_DIR, path.basename(filePath) + '.amended')); } catch (_) {} }
-        writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'refined' });
+        writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'refined', provenance: req._approvalProvenance });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {
@@ -2775,7 +2940,7 @@ const server = http.createServer(async (req, res) => {
         let content = fs.readFileSync(filePath, 'utf8');
         content = updateFrontmatter(content, { status: 'REJECTED' });
         try { fs.renameSync(filePath, path.join(TRASH_DIR, `${id}-REJECTED.md`)); } catch (_) { fs.writeFileSync(path.join(TRASH_DIR, `${id}-REJECTED.md`), content, 'utf8'); }
-        writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'rejected' });
+        writeRegisterEvent({ event: 'HUMAN_APPROVAL', slice_id: id, action: 'rejected', provenance: req._approvalProvenance });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {

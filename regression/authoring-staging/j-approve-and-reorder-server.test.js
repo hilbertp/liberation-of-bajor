@@ -83,6 +83,15 @@ function compileServer(root) {
     `module.exports = require(${JSON.stringify(path.resolve(__dirname, '..', '..', 'bridge', 'return-to-stage-eligibility.js'))});\n`,
     'utf8',
   );
+  // Slice 354: approval provenance is one shared bridge module, read by the
+  // dashboard server and the orchestrator alike — same reasoning as the
+  // return-to-stage rules above. The fixture root gets the REAL one, so the
+  // nonce gate and the frontmatter stamp under test are the shipped ones.
+  fs.writeFileSync(
+    path.join(root, 'bridge', 'approval-provenance.js'),
+    `module.exports = require(${JSON.stringify(path.resolve(__dirname, '..', '..', 'bridge', 'approval-provenance'))});\n`,
+    'utf8',
+  );
   fs.writeFileSync(lifecyclePath, `
 'use strict';
 module.exports = {
@@ -119,6 +128,25 @@ module.exports = {
   return mod.exports.server;
 }
 
+// Slice 354: the approve / amend / reject endpoints refuse a request that cannot
+// prove it came from a page this server served. The UI nonce is injected into the
+// served document and sent back as a header, so the harness drives the endpoint
+// exactly the way the dashboard does. Read once per server, reused — the nonce is
+// deliberately not consumed on use.
+let uiNonce = '';
+function fetchUiNonce() {
+  return new Promise((resolve, reject) => {
+    http.get({ hostname: '127.0.0.1', port, path: '/' }, res => {
+      let raw = '';
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => {
+        const m = raw.match(/window\.__DS9_UI_NONCE="([a-f0-9]+)"/);
+        resolve(m ? m[1] : '');
+      });
+    }).on('error', reject);
+  });
+}
+
 function request(method, urlPath, payload) {
   return new Promise((resolve, reject) => {
     const body = payload == null ? '' : JSON.stringify(payload);
@@ -127,7 +155,10 @@ function request(method, urlPath, payload) {
       port,
       path: urlPath,
       method,
-      headers: body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
+      headers: Object.assign(
+        body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {},
+        uiNonce ? { 'X-DS9-UI-Nonce': uiNonce } : {},
+      ),
     }, res => {
       let raw = '';
       res.on('data', chunk => { raw += chunk; });
@@ -206,6 +237,7 @@ before(async () => {
   server = compileServer(tmpRoot);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   port = server.address().port;
+  uiNonce = await fetchUiNonce();
 });
 
 after(async () => {

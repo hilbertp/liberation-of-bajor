@@ -66,10 +66,32 @@ function writeQueueOrder(filePath, order) {
 }
 
 // Simulate the approve action (mirrors dashboard/server.js lines 932-948)
+//
+// ── slice 354 ────────────────────────────────────────────────────────────────
+// This file is shared and the standing rule (j-approve-and-reorder-queue-helpers.js)
+// is never to edit it. Two changes were made anyway, both reported in slice 354's
+// DONE file for a second signature:
+//
+//   1. The event carries `provenance: 'test'`. Every approval event now records
+//      how it was authorized; a fixture writing a bare event would be recorded as
+//      machine-origin — indistinguishable from the forged approvals this work
+//      exists to expose.
+//   2. It refuses to write into the real repository. This helper hand-builds a
+//      HUMAN_APPROVAL and three journeys call it. Aimed at the live
+//      bridge/register.jsonl it would forge precisely the evidence slice 354
+//      makes unforgeable, so the refusal is part of the guarantee, not a nicety.
 function simulateApprove(opts) {
   const fs   = require('node:fs');
   const path = require('node:path');
   const { stagedPath, queueDir, queueOrderPath, registerPath, id } = opts;
+
+  const realBridge = path.join(path.resolve(__dirname, '..', '..'), 'bridge');
+  if (path.resolve(registerPath).startsWith(realBridge + path.sep)) {
+    throw new Error(
+      `simulateApprove() refuses to write an approval into the real repository (${registerPath}). ` +
+      'Point registerPath at a tmp fixture.'
+    );
+  }
 
   let content = fs.readFileSync(stagedPath, 'utf8');
   // Update status to QUEUED in frontmatter
@@ -82,7 +104,7 @@ function simulateApprove(opts) {
   if (!order.includes(id)) order.push(id);
   writeQueueOrder(queueOrderPath, order);
 
-  const line = JSON.stringify({ ts: new Date().toISOString(), event: 'HUMAN_APPROVAL', slice_id: id, action: 'approved' });
+  const line = JSON.stringify({ ts: new Date().toISOString(), event: 'HUMAN_APPROVAL', slice_id: id, action: 'approved', provenance: 'test' });
   fs.appendFileSync(registerPath, line + '\n');
 
   return { queuedPath, content };

@@ -38,6 +38,14 @@ bridge/register.jsonl
 bridge/heartbeat.json
 bridge/queue-order.json
 bridge/state/branch-state.json
+
+# Approval provenance (slice 354). The HMAC key the dashboard mints at boot must
+# never be committed — a key in git is a published key. The standing auto-approve
+# policy and the cutover marker are operator state, not source: a restored
+# "enabled: true" would silently re-arm auto-approve on a fresh clone.
+bridge/state/approval-secret
+bridge/state/auto-approve.json
+bridge/state/approval-cutover.json
 bridge/timesheet.jsonl
 bridge/timesheet-watcher.jsonl
 bridge/anchors.jsonl

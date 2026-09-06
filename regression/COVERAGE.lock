@@ -1,6 +1,6 @@
 {
   "generator": "scripts/build-coverage-map.js",
-  "guardCount": 554,
+  "guardCount": 568,
   "bySource": {
     ".github/workflows/promote.yml": [
       {
@@ -176,6 +176,20 @@
         "file": "regression/gate-merge/j-ac-gate-wire.test.js"
       }
     ],
+    "bridge/approval-provenance.js": [
+      {
+        "tag": "slice-354-ac-5",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      },
+      {
+        "tag": "slice-354-ac-6",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      },
+      {
+        "tag": "slice-354-ac-7",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      }
+    ],
     "bridge/orchestrator.js": [
       {
         "tag": "slice-350-ac-1",
@@ -216,6 +230,18 @@
         "tag": "slice-353-ac-7",
         "file": "regression/orchestrator/j-slice-branch-base.test.js",
         "guardAcHash": "sha256:9e6e74b03e15a148a19a4c469fc90e233d85d8367d16a230801169dc9f107987"
+      },
+      {
+        "tag": "slice-354-ac-5",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      },
+      {
+        "tag": "slice-354-ac-6",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      },
+      {
+        "tag": "slice-354-ac-7",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
       },
       {
         "tag": "slice-370-ac-1",
@@ -449,6 +475,18 @@
         "tag": "slice-350-ac-1",
         "file": "regression/observability/j-s-numbering-retirement.test.js",
         "guardAcHash": "sha256:f1aedeee46ff306b61d631f636ff511524e8b437262aba9e8f6ea72fdf96f0d1"
+      },
+      {
+        "tag": "slice-354-ac-5",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      },
+      {
+        "tag": "slice-354-ac-6",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
+      },
+      {
+        "tag": "slice-354-ac-7",
+        "file": "regression/provenance/j-approval-provenance-dispatch.test.js"
       },
       {
         "tag": "slice-356-ac-1",
@@ -910,6 +948,26 @@
         "tag": "slice-350-ac-1",
         "file": "regression/observability/j-s-numbering-retirement.test.js",
         "guardAcHash": "sha256:f1aedeee46ff306b61d631f636ff511524e8b437262aba9e8f6ea72fdf96f0d1"
+      },
+      {
+        "tag": "slice-354-ac-1",
+        "file": "regression/provenance/j-approval-provenance-server.test.js"
+      },
+      {
+        "tag": "slice-354-ac-2",
+        "file": "regression/provenance/j-approval-provenance-server.test.js"
+      },
+      {
+        "tag": "slice-354-ac-3",
+        "file": "regression/provenance/j-approval-provenance-server.test.js"
+      },
+      {
+        "tag": "slice-354-ac-4",
+        "file": "regression/provenance/j-approval-provenance-server.test.js"
+      },
+      {
+        "tag": "slice-354-ac-8",
+        "file": "regression/provenance/j-approval-provenance-server.test.js"
       },
       {
         "tag": "slice-356-ac-1",
