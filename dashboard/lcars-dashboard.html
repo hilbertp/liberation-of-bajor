@@ -6544,7 +6544,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
 
         <!-- Header row: label left, timer right -->
         <div class="active-slice-header">
-          <div class="active-slice-label">Active Build<span class="lore-tag"> (Workshop)</span> <span class="panel-owner" data-role="rom">Full-Stack Engineer</span></div>
+          <div class="active-slice-label">Active Build<span class="lore-tag"> (Workshop)</span> <span class="panel-owner" data-role="rom" data-with-name>Sam &middot; Full-Stack Engineer</span></div>
           <div class="active-slice-timer" id="active-timer-block" style="display:none">
             <div class="active-slice-timer-value" id="mission-elapsed">0m 00s</div>
             <div class="active-slice-timer-label">elapsed</div>
@@ -6607,7 +6607,7 @@ body:not(.lcars-mode) .staged-details-body pre code {
     <!-- POST-BUILD PIPELINE -->
     <div class="panel-postbuild">
       <div class="postbuild-panel" id="postbuild-panel">
-        <div class="section-title">Peer Review<span class="lore-tag"> (Quality Diagnostics)</span> <span class="panel-owner" data-role="nog">Reviewer</span></div>
+        <div class="section-title">Peer Review<span class="lore-tag"> (Quality Diagnostics)</span> <span class="panel-owner" data-role="nog" data-with-name>Jordan &middot; Reviewer</span></div>
         <div class="postbuild-lane" id="nog-lane">
           <div class="postbuild-lane-header">
             <span class="postbuild-badge" id="nog-badge" style="display:none"></span>
@@ -6627,7 +6627,6 @@ body:not(.lcars-mode) .staged-details-body pre code {
             <!-- Header row -->
             <div class="nog-running-header">
               <div>
-                <span class="role-person-label" data-role="nog" style="font-size:12px;font-weight:700;color:#111827;margin-right:6px">Jordan</span>
                 <span class="nog-running-subtitle" id="nog-round-label">Dual-gate review · round 1 of 5</span>
               </div>
               <span class="nog-reviewing-pill">reviewing</span>
@@ -9228,7 +9227,13 @@ body:not(.lcars-mode) .staged-details-body pre code {
   // Re-paint every theme-aware label. Runs on load and on every theme toggle.
   function applyRoleLabels() {
     document.querySelectorAll('.panel-owner[data-role]').forEach(el => {
-      if (ROLE[el.dataset.role]) el.textContent = ownerChip(el.dataset.role);
+      const k = el.dataset.role; if (!ROLE[k]) return;
+      // data-with-name: the panel says WHO is on it, permanently, in every panel state.
+      // personName() pairs with roleTitle(), never with ownerChip() — ownerChip is the
+      // character in LCARS, so that pairing would render "Rom · Rom".
+      el.textContent = el.hasAttribute('data-with-name')
+        ? personName(k) + ' · ' + roleTitle(k)
+        : ownerChip(k);
     });
     document.querySelectorAll('.crew-card[data-role]').forEach(el => {
       const k = el.dataset.role; if (!ROLE[k]) return;

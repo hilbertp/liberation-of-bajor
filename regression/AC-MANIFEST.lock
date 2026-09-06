@@ -1,6 +1,6 @@
 {
   "generator": "scripts/build-ac-manifest.js",
-  "acCount": 278,
+  "acCount": 283,
   "legacyCount": 229,
   "byTag": {
     "slice-042-ac-1": {
@@ -1159,6 +1159,46 @@
       "slice": "382",
       "text": "the acceptance criterion that pinned the previous name states the new name, carried by the authorised change declaration",
       "acHash": "sha256:055a0fc4119fba6811aab051a56322ce993936f63fbb64b95377ee7eed8f4d72",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-383-ac-1": {
+      "slice": "383",
+      "text": "the Active Build panel's first row shows the person's name in every panel state — idle, active and blocked — reading \"Sam · Full-Stack Engineer\" in light mode",
+      "acHash": "sha256:2d6fa5b6c40ba0e8d0c9b0d0179e448a32807cf2337ef922cc652ccb8721a101",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-383-ac-2": {
+      "slice": "383",
+      "text": "the Peer Review panel's first row shows the person's name in every panel state — idle and running — reading \"Jordan · Reviewer\" in light mode",
+      "acHash": "sha256:9105d49da08650a605155e343472d0fd6dda6db2f42bd3dab3266b46c5c20adb",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-383-ac-3": {
+      "slice": "383",
+      "text": "in the LCARS skin the same two rows read \"Rom · Backend Implementor\" and \"Nog · Evaluator\", with no name printed twice, and they repaint correctly every time the theme is toggled",
+      "acHash": "sha256:f04b24d666e7af8b8808db4cd0f69abae552c09bb248574ec299396cf3b9a361",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-383-ac-4": {
+      "slice": "383",
+      "text": "the owner chips on the DevOps Station, Backlog Queue and History panels are unchanged, still reading \"QA Engineer\", \"Dev Lead\" and \"Dev Lead\" in light mode",
+      "acHash": "sha256:b10eb8b560c8846354e07e4cd39a9e737bf7ef8d218f3fabaf569b124bbd2c2c",
+      "source": "commit-trailer",
+      "status": "active",
+      "legacy": false
+    },
+    "slice-383-ac-5": {
+      "slice": "383",
+      "text": "the reviewer's name appears exactly once in the Peer Review panel while a review is running",
+      "acHash": "sha256:3cafcbc471845befc6a9decfa74138632bfbecb023461622a5792d5a539d7a6c",
       "source": "commit-trailer",
       "status": "active",
       "legacy": false

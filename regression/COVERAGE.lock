@@ -1,6 +1,6 @@
 {
   "generator": "scripts/build-coverage-map.js",
-  "guardCount": 573,
+  "guardCount": 578,
   "bySource": {
     ".github/workflows/promote.yml": [
       {
@@ -675,6 +675,31 @@
         "tag": "slice-382-ac-4",
         "file": "regression/direct-controls/j-qa-and-branches.test.js",
         "guardAcHash": "sha256:055a0fc4119fba6811aab051a56322ce993936f63fbb64b95377ee7eed8f4d72"
+      },
+      {
+        "tag": "slice-383-ac-1",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:2d6fa5b6c40ba0e8d0c9b0d0179e448a32807cf2337ef922cc652ccb8721a101"
+      },
+      {
+        "tag": "slice-383-ac-2",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:9105d49da08650a605155e343472d0fd6dda6db2f42bd3dab3266b46c5c20adb"
+      },
+      {
+        "tag": "slice-383-ac-3",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:f04b24d666e7af8b8808db4cd0f69abae552c09bb248574ec299396cf3b9a361"
+      },
+      {
+        "tag": "slice-383-ac-4",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:b10eb8b560c8846354e07e4cd39a9e737bf7ef8d218f3fabaf569b124bbd2c2c"
+      },
+      {
+        "tag": "slice-383-ac-5",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:3cafcbc471845befc6a9decfa74138632bfbecb023461622a5792d5a539d7a6c"
       },
       {
         "tag": "slice-99777-ac-1",
@@ -2195,6 +2220,33 @@
         "tag": "slice-340-ac-6",
         "file": "regression/direct-controls/j-devops-station.test.js",
         "guardAcHash": "sha256:84c994374c163ed0b343600152a47ba7960bb36bebe31a40b1228e89a309562b"
+      }
+    ],
+    "regression/direct-controls/j-panel-owner-names.test.js": [
+      {
+        "tag": "slice-383-ac-1",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:2d6fa5b6c40ba0e8d0c9b0d0179e448a32807cf2337ef922cc652ccb8721a101"
+      },
+      {
+        "tag": "slice-383-ac-2",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:9105d49da08650a605155e343472d0fd6dda6db2f42bd3dab3266b46c5c20adb"
+      },
+      {
+        "tag": "slice-383-ac-3",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:f04b24d666e7af8b8808db4cd0f69abae552c09bb248574ec299396cf3b9a361"
+      },
+      {
+        "tag": "slice-383-ac-4",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:b10eb8b560c8846354e07e4cd39a9e737bf7ef8d218f3fabaf569b124bbd2c2c"
+      },
+      {
+        "tag": "slice-383-ac-5",
+        "file": "regression/direct-controls/j-panel-owner-names.test.js",
+        "guardAcHash": "sha256:3cafcbc471845befc6a9decfa74138632bfbecb023461622a5792d5a539d7a6c"
       }
     ],
     "regression/direct-controls/j-qa-and-branches.test.js": [
